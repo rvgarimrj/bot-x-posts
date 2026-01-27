@@ -9,6 +9,14 @@ function getBot() {
   return bot
 }
 
+// Escapa HTML para evitar erros de parsing
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
 export async function sendNotification(message) {
   return getBot().sendMessage(
     process.env.TELEGRAM_CHAT_ID,
@@ -31,7 +39,7 @@ export async function sendPostsForApproval(posts) {
     const emoji = topic === 'crypto' ? '₿' : topic === 'investing' ? '📊' : topic === 'ia' ? '🤖' : '💻'
 
     await telegramBot.sendMessage(chatId,
-      `${emoji} <b>[${i + 1}] ${topic.toUpperCase()}</b> <i>(${chars} chars)</i>\n\n"${post}"`,
+      `${emoji} <b>[${i + 1}] ${topic.toUpperCase()}</b> <i>(${chars} chars)</i>\n\n"${escapeHtml(post)}"`,
       {
         parse_mode: 'HTML',
         reply_markup: {
@@ -48,7 +56,14 @@ export async function sendPostsForApproval(posts) {
 
   await telegramBot.sendMessage(chatId,
     `💡 Ou envie qualquer texto para postar diretamente`,
-    { parse_mode: 'HTML' }
+    {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '✅ Finalizar Sessão', callback_data: 'finish_session' }
+        ]]
+      }
+    }
   )
 }
 
@@ -69,20 +84,36 @@ export async function waitForChoice(posts, onPublish) {
   console.log(`   Posts disponíveis: ${posts.map((p, i) => `[${i + 1}] ${p.topic}`).join(', ')}`)
 
   return new Promise((resolve, reject) => {
+    // Timeout de 2 horas
+    const TIMEOUT_MS = 2 * 60 * 60 * 1000
+
     const timeout = setTimeout(() => {
       if (!resolved) {
         console.log('⏰ Timeout atingido')
-        telegramBot.sendMessage(chatId, '⏰ Timeout - rode novamente quando quiser postar')
+        telegramBot.sendMessage(chatId,
+          '⏰ <b>Timeout</b> - nenhum post selecionado.\n\nClique abaixo para gerar novos posts:',
+          {
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '🔄 Regenerar Posts', callback_data: 'regenerate' }
+              ]]
+            }
+          }
+        )
         cleanup()
         resolve({ success: false, reason: 'timeout' })
       }
-    }, 10 * 60 * 1000)
+    }, TIMEOUT_MS)
 
     function cleanup() {
       resolved = true
       clearTimeout(timeout)
       telegramBot.stopPolling()
     }
+
+    const publishedIndexes = new Set()
+    let lastPublishedUrl = null
 
     // Handler para botoes
     telegramBot.on('callback_query', async (query) => {
@@ -97,18 +128,34 @@ export async function waitForChoice(posts, onPublish) {
           const selectedPost = posts[index]
 
           if (selectedPost) {
+            // Verificar se já foi publicado
+            if (publishedIndexes.has(index)) {
+              await telegramBot.answerCallbackQuery(query.id, { text: '⚠️ Já publicado!' })
+              return
+            }
+
             await telegramBot.answerCallbackQuery(query.id, { text: '📤 Publicando...' })
 
             console.log(`📤 Publicando post [${index + 1}] ${selectedPost.topic}`)
             const result = await onPublish(selectedPost.post)
+            publishedIndexes.add(index)
+            lastPublishedUrl = result.url
+
+            const remaining = posts.length - publishedIndexes.size
+            const remainingMsg = remaining > 0
+              ? `\n\n📝 Ainda restam ${remaining} posts. Clique em outro para publicar ou aguarde.`
+              : '\n\n✅ Todos os posts foram publicados!'
 
             await telegramBot.sendMessage(chatId,
-              `✅ <b>Publicado!</b>\n\n<a href="${result.url}">Ver no X</a>`,
+              `✅ <b>Publicado [${index + 1}] ${selectedPost.topic.toUpperCase()}!</b>\n\n<a href="${result.url}">Ver no X</a>${remainingMsg}`,
               { parse_mode: 'HTML' }
             )
 
-            cleanup()
-            resolve({ success: true, url: result.url })
+            // Se publicou todos, encerra
+            if (remaining === 0) {
+              cleanup()
+              resolve({ success: true, url: lastPublishedUrl, count: publishedIndexes.size })
+            }
           }
         } else if (query.data.startsWith('edit_')) {
           const selectedPost = posts[index]
@@ -143,6 +190,17 @@ export async function waitForChoice(posts, onPublish) {
         } else if (query.data === 'cancel_text') {
           await telegramBot.answerCallbackQuery(query.id, { text: 'Cancelado' })
           pendingText = null
+        } else if (query.data === 'finish_session') {
+          await telegramBot.answerCallbackQuery(query.id, { text: '✅ Finalizando...' })
+
+          const count = publishedIndexes.size
+          await telegramBot.sendMessage(chatId,
+            `✅ <b>Sessão finalizada!</b>\n\n📊 ${count} post(s) publicado(s).`,
+            { parse_mode: 'HTML' }
+          )
+
+          cleanup()
+          resolve({ success: true, url: lastPublishedUrl, count })
         }
       } catch (err) {
         // Ignora erros de callback antigo
