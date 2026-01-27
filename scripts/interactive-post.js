@@ -3,6 +3,7 @@ import { generatePost } from '../src/claude.js'
 import { sendPostsForApproval, waitForChoice } from '../src/telegram.js'
 import { createTwitterClient, postTweet } from '../src/twitter.js'
 import { curateContent, getFallbackContent } from '../src/curate.js'
+import { getEngagementContext } from '../src/learn.js'
 
 async function main() {
   console.log('🎯 Bot-X-Posts - Modo Interativo')
@@ -19,8 +20,20 @@ async function main() {
     content = getFallbackContent()
   }
 
-  // 2. Gerar posts
-  console.log('\n2. Gerando posts com dados curados...')
+  // 2. Analisar engajamento de posts anteriores
+  console.log('\n2. Analisando engajamento de posts anteriores...')
+  let learningContext = null
+  try {
+    learningContext = await getEngagementContext()
+    if (learningContext) {
+      console.log('   ✅ Insights de engajamento carregados')
+    }
+  } catch (err) {
+    console.log('   ⚠️ Nao foi possivel analisar engajamento:', err.message)
+  }
+
+  // 3. Gerar posts
+  console.log('\n3. Gerando posts com dados curados...')
   const allPosts = []
 
   for (const [topic, data] of Object.entries(content)) {
@@ -33,7 +46,7 @@ Fonte: ${data.source}
     for (const angle of data.angles) {
       console.log(`   Gerando: ${topic}...`)
       try {
-        const post = await generatePost(topic, fullContext, angle)
+        const post = await generatePost(topic, fullContext, angle, learningContext)
         allPosts.push({ topic, angle, post, chars: post.length, source: data.source })
       } catch (err) {
         console.log(`   ⚠️ Erro ao gerar ${topic}: ${err.message}`)
@@ -48,13 +61,13 @@ Fonte: ${data.source}
 
   console.log(`   ✅ ${allPosts.length} posts gerados`)
 
-  // 3. Enviar para Telegram
-  console.log('\n3. Enviando opcoes para Telegram...')
+  // 4. Enviar para Telegram
+  console.log('\n4. Enviando opcoes para Telegram...')
   await sendPostsForApproval(allPosts)
   console.log('   ✅ Opcoes enviadas')
 
-  // 4. Aguardar escolha
-  console.log('\n4. Aguardando escolha no Telegram (timeout: 10min)...')
+  // 5. Aguardar escolha
+  console.log('\n5. Aguardando escolha no Telegram (timeout: 10min)...')
 
   const twitterClient = createTwitterClient()
 
