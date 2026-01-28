@@ -17,14 +17,15 @@ Dados: ${data.data.join(', ')}
 Fonte: ${data.source}
     `.trim()
 
-    for (const angle of data.angles) {
-      console.log(`   Gerando: ${topic}...`)
-      try {
-        const post = await generatePost(topic, fullContext, angle, learningContext)
-        allPosts.push({ topic, angle, post, chars: post.length, source: data.source })
-      } catch (err) {
-        console.log(`   ⚠️ Erro ao gerar ${topic}: ${err.message}`)
-      }
+    // Usa o primeiro angulo (melhor) ou escolhe aleatoriamente
+    const angle = data.angles[0] || 'Analise do mercado'
+
+    console.log(`   Gerando: ${topic}...`)
+    try {
+      const post = await generatePost(topic, fullContext, angle, learningContext)
+      allPosts.push({ topic, angle, post, chars: post.length, source: data.source })
+    } catch (err) {
+      console.log(`   ⚠️ Erro ao gerar ${topic}: ${err.message}`)
     }
   }
 

@@ -16,7 +16,7 @@ const delay = ms => new Promise(r => setTimeout(r, ms))
 let lastPostTime = 0
 const MIN_DELAY_BETWEEN_POSTS = 10000 // 10 segundos entre posts
 
-export async function postTweet(client, text, retries = 2) {
+export async function postTweet(client, text, retries = 1) {
   // Garantir delay minimo entre posts
   const now = Date.now()
   const timeSinceLastPost = now - lastPostTime
@@ -33,12 +33,21 @@ export async function postTweet(client, text, retries = 2) {
       url: `https://x.com/${process.env.X_USERNAME}/status/${data.id}`
     }
   } catch (err) {
-    // Rate limit - aguarda e tenta novamente
+    // Rate limit - aguarda brevemente e tenta mais uma vez
     if ((err.code === 429 || err.message?.includes('429')) && retries > 0) {
-      console.log(`⏳ Rate limit atingido, aguardando 2 minutos...`)
-      await delay(120000) // Aguarda 2 minutos
+      console.log(`⏳ Rate limit atingido, aguardando 30s...`)
+      await delay(30000) // Aguarda 30 segundos
       return postTweet(client, text, retries - 1)
     }
+
+    // Erro especifico para rate limit persistente
+    if (err.code === 429 || err.message?.includes('429')) {
+      const rateLimitError = new Error('RATE_LIMIT_EXCEEDED')
+      rateLimitError.isRateLimit = true
+      rateLimitError.original = err
+      throw rateLimitError
+    }
+
     throw err
   }
 }

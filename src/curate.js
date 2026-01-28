@@ -74,22 +74,34 @@ async function fetchHackerNews() {
 async function analyzeWithClaude(topic, rawData) {
   const message = await anthropic.messages.create({
     model: 'claude-opus-4-5-20251101',
-    max_tokens: 1000,
+    max_tokens: 1500,
     messages: [{
       role: 'user',
-      content: `Voce e um curador de conteudo. Analise esses dados sobre ${topic} e extraia:
-1. A noticia/tendencia MAIS relevante do momento
-2. Dados concretos (numeros, %, valores)
-3. Um angulo unico/contrarian para um post
+      content: `Voce e um curador de conteudo especializado em encontrar ANGULOS VIRAIS.
 
-Dados brutos:
+TOPICO: ${topic}
+
+DADOS BRUTOS:
 ${JSON.stringify(rawData, null, 2)}
+
+TAREFA: Extraia a noticia mais relevante e crie 3 ANGULOS diferentes para posts.
+
+TIPOS DE ANGULOS (use variedade):
+1. CONTRARIAN: O oposto do que todos estao dizendo
+2. CONSEQUENCIA: O efeito de segunda ordem que ninguem ve
+3. CONEXAO: Ligacao inesperada com outro assunto
+4. HISTORICO: Paralelo com evento passado
+5. PREVISAO: O que vai acontecer se continuar assim
 
 Responda em JSON:
 {
-  "mainNews": "resumo da noticia principal",
-  "data": ["dado1", "dado2", "dado3"],
-  "angle": "angulo unico para post",
+  "mainNews": "resumo factual da noticia (max 100 chars)",
+  "keyData": ["numero/dado concreto 1", "numero/dado concreto 2"],
+  "angles": [
+    {"type": "CONTRARIAN", "hook": "gancho em 40 chars", "insight": "a opiniao/conclusao"},
+    {"type": "CONSEQUENCIA", "hook": "gancho em 40 chars", "insight": "a opiniao/conclusao"},
+    {"type": "CONEXAO", "hook": "gancho em 40 chars", "insight": "a opiniao/conclusao"}
+  ],
   "source": "fonte principal"
 }`
     }]
@@ -102,6 +114,15 @@ Responda em JSON:
   } catch {
     return null
   }
+}
+
+// Formata angulos do novo formato para string
+function formatAngles(angles) {
+  if (!angles || !Array.isArray(angles)) return null
+  return angles.map(a => {
+    if (typeof a === 'string') return a
+    return `[${a.type}] ${a.hook} → ${a.insight}`
+  })
 }
 
 // Curadoria completa
@@ -119,8 +140,8 @@ export async function curateContent() {
   })
   curated.crypto = {
     context: cryptoAnalysis?.mainNews || 'Sem dados',
-    data: cryptoAnalysis?.data || [],
-    angles: [cryptoAnalysis?.angle || 'Analise do mercado crypto'],
+    data: cryptoAnalysis?.keyData || cryptoAnalysis?.data || [],
+    angles: formatAngles(cryptoAnalysis?.angles) || ['Analise do mercado crypto'],
     source: cryptoAnalysis?.source || 'Reddit'
   }
 
@@ -138,8 +159,8 @@ export async function curateContent() {
   })
   curated.investing = {
     context: investingAnalysis?.mainNews || 'Sem dados',
-    data: investingAnalysis?.data || [],
-    angles: [investingAnalysis?.angle || 'Analise do mercado americano'],
+    data: investingAnalysis?.keyData || investingAnalysis?.data || [],
+    angles: formatAngles(investingAnalysis?.angles) || ['Analise do mercado americano'],
     source: investingAnalysis?.source || 'Wall Street'
   }
 
@@ -161,8 +182,8 @@ export async function curateContent() {
   })
   curated.vibeCoding = {
     context: vibeCodingAnalysis?.mainNews || 'Sem dados',
-    data: vibeCodingAnalysis?.data || [],
-    angles: [vibeCodingAnalysis?.angle || 'Analise de vibe coding'],
+    data: vibeCodingAnalysis?.keyData || vibeCodingAnalysis?.data || [],
+    angles: formatAngles(vibeCodingAnalysis?.angles) || ['Analise de vibe coding'],
     source: vibeCodingAnalysis?.source || 'HN/Reddit'
   }
 
@@ -185,8 +206,8 @@ export async function curateContent() {
   })
   curated.ia = {
     context: iaAnalysis?.mainNews || 'Sem dados',
-    data: iaAnalysis?.data || [],
-    angles: [iaAnalysis?.angle || 'Analise do mercado de IA'],
+    data: iaAnalysis?.keyData || iaAnalysis?.data || [],
+    angles: formatAngles(iaAnalysis?.angles) || ['Analise do mercado de IA'],
     source: iaAnalysis?.source || 'HN/Reddit'
   }
 
@@ -198,27 +219,27 @@ export async function curateContent() {
 export function getFallbackContent() {
   return {
     crypto: {
-      context: 'Bitcoin e mercado crypto em movimento. ETFs, regulacao e adocao institucional continuam sendo temas quentes.',
-      data: ['Volatilidade do BTC', 'Fluxo de ETFs', 'Decisoes regulatorias'],
-      angles: ['Analise contrarian do mercado crypto'],
+      context: 'Bitcoin e mercado crypto em movimento',
+      data: ['Volatilidade BTC', 'Fluxo ETFs', 'Regulacao'],
+      angles: ['[CONTRARIAN] Enquanto todos comemoram... → O risco que ninguem ve'],
       source: 'Mercado'
     },
     investing: {
-      context: 'NASDAQ e S&P 500 reagindo a earnings das big techs e decisoes do Fed.',
-      data: ['Variacao do S&P 500', 'Earnings FAANG', 'Taxa de juros Fed'],
-      angles: ['O que Wall Street nao esta precificando'],
+      context: 'NASDAQ e S&P 500 reagindo a earnings e Fed',
+      data: ['Variacao S&P 500', 'Earnings big techs', 'Decisao juros'],
+      angles: ['[CONSEQUENCIA] Wall Street celebra, mas... → O efeito de segunda ordem'],
       source: 'Wall Street'
     },
     vibeCoding: {
-      context: 'Ferramentas de AI coding evoluindo rapidamente. Claude Code, Cursor e Copilot disputam espaco.',
-      data: ['Adocao de AI coding', 'Produtividade dev', 'Novos features'],
-      angles: ['Critica honesta sobre AI coding tools'],
+      context: 'AI coding tools evoluindo rapidamente',
+      data: ['Claude Code', 'Cursor', 'Produtividade'],
+      angles: ['[CONTRARIAN] Todo mundo falando de produtividade... → O lado que ninguem menciona'],
       source: 'Tech'
     },
     ia: {
-      context: 'Corrida de LLMs continua. OpenAI, Anthropic, Google e Meta lancando novos modelos.',
-      data: ['Benchmarks de modelos', 'Custos de inferencia', 'Adocao enterprise'],
-      angles: ['O que realmente importa na guerra dos LLMs'],
+      context: 'Corrida de LLMs entre OpenAI, Anthropic, Google',
+      data: ['Novos modelos', 'Custos', 'Benchmarks'],
+      angles: ['[CONEXAO] Enquanto discutem qual modelo e melhor... → Quem realmente ganha'],
       source: 'Tech'
     }
   }

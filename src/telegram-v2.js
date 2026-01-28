@@ -189,29 +189,19 @@ async function publishAllPosts(posts, onPublish, telegramBot, chatId) {
       results.push({ success: false, topic: post.topic, error: err.message })
 
       let errorMsg = err.message
-      if (err.message?.includes('429')) {
-        errorMsg = 'Rate limit do Twitter. Aguardando 2 minutos...'
-        // Aguarda mais tempo em caso de rate limit
-        await new Promise(r => setTimeout(r, 120000))
 
-        // Tenta novamente
-        try {
-          const retryResult = await onPublish(post.post)
-          results[results.length - 1] = { success: true, topic: post.topic, url: retryResult.url }
+      // Rate limit persistente - não tentar mais, seguir em frente
+      if (err.isRateLimit || err.message?.includes('429') || err.message === 'RATE_LIMIT_EXCEEDED') {
+        errorMsg = '⚠️ Rate limit do Twitter atingido. Limite diário possivelmente esgotado.'
+        console.log(`   ⚠️ Rate limit persistente - pulando para próximo post`)
 
+        // Se é o primeiro post com rate limit, abortar todos os demais
+        if (i === 0) {
           await telegramBot.sendMessage(chatId,
-            `✅ <b>[${i + 1}/${posts.length}] ${post.topic.toUpperCase()}</b> publicado (retry)!\n\n<a href="${retryResult.url}">Ver no X</a>`,
+            `🚫 <b>Rate limit do Twitter!</b>\n\nO limite de posts foi atingido. Tente novamente mais tarde (geralmente reseta à meia-noite).\n\nNenhum post foi publicado.`,
             { parse_mode: 'HTML' }
           )
-
-          // Aguarda antes do próximo post
-          if (i < posts.length - 1) {
-            console.log(`   ⏳ Aguardando 30s antes do próximo...`)
-            await new Promise(r => setTimeout(r, DELAY_BETWEEN_POSTS))
-          }
-          continue
-        } catch (retryErr) {
-          errorMsg = `Falhou após retry: ${retryErr.message}`
+          return results
         }
       }
 
