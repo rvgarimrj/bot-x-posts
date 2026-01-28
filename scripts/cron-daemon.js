@@ -6,13 +6,13 @@ import { sendNotification } from '../src/telegram.js'
 const TIMEZONE = 'America/Sao_Paulo'
 const SCHEDULE = [
   { hour: 8, cron: '0 8 * * *' },
-  { hour: 14, cron: '0 14 * * *' },
+  { hour: 12, cron: '0 12 * * *' },
   { hour: 18, cron: '0 18 * * *' }
 ]
 
 console.log('🤖 Bot-X-Posts Daemon')
 console.log('='.repeat(50))
-console.log(`⏰ Horarios agendados: 8h, 14h, 18h (${TIMEZONE})`)
+console.log(`⏰ Horarios agendados: 8h, 12h, 18h (${TIMEZONE})`)
 console.log(`📅 Iniciado em: ${new Date().toLocaleString('pt-BR', { timeZone: TIMEZONE })}`)
 console.log('='.repeat(50))
 
@@ -72,7 +72,7 @@ process.stdin.on('data', (input) => {
     runBot()
   } else if (cmd === 'status' || cmd === 's') {
     console.log(`⏰ Hora atual: ${new Date().toLocaleString('pt-BR', { timeZone: TIMEZONE })}`)
-    console.log(`📅 Proximos horarios: 8h, 14h, 18h`)
+    console.log(`📅 Proximos horarios: 8h, 12h, 18h`)
   } else if (cmd === 'help' || cmd === 'h') {
     console.log('Comandos: run (r), status (s), help (h)')
   }
@@ -88,6 +88,6 @@ process.on('SIGINT', async () => {
 })
 
 // Notifica inicio
-sendNotification(`🟢 <b>Bot-X-Posts</b> iniciado!\n\n⏰ Horarios: 8h, 14h, 18h\n📍 Timezone: ${TIMEZONE}`)
+sendNotification(`🟢 <b>Bot-X-Posts</b> iniciado!\n\n⏰ Horarios: 8h, 12h, 18h\n📍 Timezone: ${TIMEZONE}`)
   .then(() => console.log('📱 Notificacao de inicio enviada'))
   .catch(err => console.error('Erro ao notificar:', err.message))
