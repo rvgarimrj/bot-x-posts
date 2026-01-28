@@ -203,6 +203,12 @@ async function publishAllPosts(posts, onPublish, telegramBot, chatId) {
             `✅ <b>[${i + 1}/${posts.length}] ${post.topic.toUpperCase()}</b> publicado (retry)!\n\n<a href="${retryResult.url}">Ver no X</a>`,
             { parse_mode: 'HTML' }
           )
+
+          // Aguarda antes do próximo post
+          if (i < posts.length - 1) {
+            console.log(`   ⏳ Aguardando 30s antes do próximo...`)
+            await new Promise(r => setTimeout(r, DELAY_BETWEEN_POSTS))
+          }
           continue
         } catch (retryErr) {
           errorMsg = `Falhou após retry: ${retryErr.message}`

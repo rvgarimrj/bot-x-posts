@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import cron from 'node-cron'
 import { spawn } from 'child_process'
-import { sendNotification } from '../src/telegram.js'
+import { sendNotification } from '../src/telegram-v2.js'
 
 const TIMEZONE = 'America/Sao_Paulo'
 const SCHEDULE = [
