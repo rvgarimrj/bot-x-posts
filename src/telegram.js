@@ -84,25 +84,52 @@ export async function waitForChoice(posts, onPublish) {
   console.log(`   Posts disponíveis: ${posts.map((p, i) => `[${i + 1}] ${p.topic}`).join(', ')}`)
 
   return new Promise((resolve, reject) => {
-    // Timeout de 2 horas
-    const TIMEOUT_MS = 2 * 60 * 60 * 1000
+    // Timeout de 20 minutos - depois publica automaticamente
+    const TIMEOUT_MS = 20 * 60 * 1000
 
-    const timeout = setTimeout(() => {
+    const timeout = setTimeout(async () => {
       if (!resolved) {
-        console.log('⏰ Timeout atingido')
-        telegramBot.sendMessage(chatId,
-          '⏰ <b>Timeout</b> - nenhum post selecionado.\n\nClique abaixo para gerar novos posts:',
-          {
-            parse_mode: 'HTML',
-            reply_markup: {
-              inline_keyboard: [[
-                { text: '🔄 Regenerar Posts', callback_data: 'regenerate' }
-              ]]
+        console.log('⏰ Timeout atingido - iniciando auto-post...')
+
+        // Publicar todos os posts não publicados
+        const unpublished = posts.filter((_, i) => !publishedIndexes.has(i))
+
+        if (unpublished.length > 0) {
+          await telegramBot.sendMessage(chatId,
+            `⏰ <b>Tempo esgotado!</b>\n\n🤖 Publicando ${unpublished.length} posts automaticamente...`,
+            { parse_mode: 'HTML' }
+          )
+
+          for (let i = 0; i < posts.length; i++) {
+            if (publishedIndexes.has(i)) continue
+
+            try {
+              console.log(`🤖 Auto-publicando [${i + 1}] ${posts[i].topic}`)
+              const result = await onPublish(posts[i].post)
+              publishedIndexes.add(i)
+              lastPublishedUrl = result.url
+
+              await telegramBot.sendMessage(chatId,
+                `✅ <b>Auto-publicado [${i + 1}] ${posts[i].topic.toUpperCase()}!</b>\n\n<a href="${result.url}">Ver no X</a>`,
+                { parse_mode: 'HTML' }
+              )
+            } catch (err) {
+              console.error(`❌ Erro ao auto-publicar [${i + 1}]:`, err.message)
+              await telegramBot.sendMessage(chatId,
+                `❌ Erro ao publicar [${i + 1}] ${posts[i].topic}: ${err.message}`,
+                { parse_mode: 'HTML' }
+              )
             }
           }
-        )
+
+          await telegramBot.sendMessage(chatId,
+            `✅ <b>Auto-post concluído!</b>\n\n📊 ${publishedIndexes.size} posts publicados.`,
+            { parse_mode: 'HTML' }
+          )
+        }
+
         cleanup()
-        resolve({ success: false, reason: 'timeout' })
+        resolve({ success: true, url: lastPublishedUrl, count: publishedIndexes.size, auto: true })
       }
     }, TIMEOUT_MS)
 
