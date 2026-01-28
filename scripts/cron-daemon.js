@@ -27,8 +27,8 @@ async function runBot() {
     console.error('Erro ao notificar inicio:', err.message)
   }
 
-  // Executa o script interativo como processo filho
-  const child = spawn('node', ['scripts/interactive-post.js'], {
+  // Executa o script interativo v2 como processo filho
+  const child = spawn('node', ['scripts/interactive-post-v2.js'], {
     cwd: process.cwd(),
     stdio: 'inherit',
     env: process.env
