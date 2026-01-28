@@ -92,6 +92,7 @@ TIPOS DE ANGULOS (use variedade):
 3. CONEXAO: Ligacao inesperada com outro assunto
 4. HISTORICO: Paralelo com evento passado
 5. PREVISAO: O que vai acontecer se continuar assim
+6. TIP_TEASE: Revela que existe dica/truque util mas NAO entrega tudo (gera curiosidade para replies)
 
 Responda em JSON:
 {
@@ -178,7 +179,10 @@ export async function curateContent() {
     hackerNews: hnStories.slice(0, 5),
     reddit: programmingReddit.slice(0, 5),
     aiRelated: aiRelated.slice(0, 5),
-    note: 'Foque em ferramentas de AI coding, Claude Code, Cursor, produtividade dev'
+    note: `Foque em ferramentas de AI coding: Claude Code, Cursor, Copilot, Windsurf.
+IMPORTANTE: Alem de noticias, procure DICAS/TIPS escondidas - configs secretas, features pouco conhecidas, truques de produtividade.
+Tipo de angulo especial: TIP_TEASE - revela que existe algo util mas nao entrega tudo (gera curiosidade).
+Exemplo: "Claude Code tem 2 features desligadas por padrao que mudam tudo" (sem dizer quais)`
   })
   curated.vibeCoding = {
     context: vibeCodingAnalysis?.mainNews || 'Sem dados',
@@ -233,7 +237,7 @@ export function getFallbackContent() {
     vibeCoding: {
       context: 'AI coding tools evoluindo rapidamente',
       data: ['Claude Code', 'Cursor', 'Produtividade'],
-      angles: ['[CONTRARIAN] Todo mundo falando de produtividade... → O lado que ninguem menciona'],
+      angles: ['[TIP_TEASE] Feature escondida que muda tudo... → Revela que existe mas gera curiosidade'],
       source: 'Tech'
     },
     ia: {

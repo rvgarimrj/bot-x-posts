@@ -46,9 +46,16 @@ INVESTING (nota 9/10):
 "Nvidia +8%, AMD -3% no mesmo dia. Wall Street nao quer 'quase tao bom'. Quer o lider. Segundo lugar no mercado de AI chips e primeiro perdedor. #NVDA #AMD"
 ↳ HOOK: contraste numerico | TENSAO: lider vs seguidor | INSIGHT: mentalidade winner-takes-all
 
-VIBECODING (nota 9/10):
+VIBECODING - OPINIAO (nota 9/10):
 "Todo mundo comemorando produtividade 10x com Cursor. Ninguem falando que cada prompt salvo no contexto e vetor de ataque. Memory Poisoning tem 19 upvotes enquanto devs confiam cegamente no output. #ClaudeCode #Cursor"
 ↳ HOOK: pattern interrupt | TENSAO: hype vs risco | INSIGHT: seguranca ignorada
+
+VIBECODING - TIP TEASE (nota 9/10):
+"Claude Code tem 2 features de memoria DESLIGADAS por padrao. Memory Flush + Session Search. Liga isso e nunca mais perde contexto entre sessoes. 1 prompt resolve. #ClaudeCode #DevTips"
+↳ HOOK: revelacao tecnica | TENSAO: desligado vs ligado | INSIGHT: beneficio claro + curiosidade (como? 1 prompt)
+
+"90% dos devs usando Cursor nao sabem que da pra rodar em modo offline. Sem telemetria vazando seu codigo proprietario. Config escondida mas existe. #Cursor #DevTools"
+↳ HOOK: estatistica chocante | TENSAO: nao sabem vs existe | INSIGHT: gera curiosidade (qual config?)
 
 IA (nota 9/10):
 "OpenAI congela contratacoes por 'aperto financeiro'. Kimi K2.5 entrega 90% do Claude por 10% do preco. A verdade incomoda: quem ta lucrando com IA nao sao as empresas de IA. #OpenAI #KimiK2"
