@@ -212,7 +212,13 @@ export async function waitForChoice(posts, onPublish) {
         try {
           await telegramBot.answerCallbackQuery(query.id, { text: '❌ Erro' })
         } catch {}
-        await telegramBot.sendMessage(chatId, `❌ Erro: ${err.message}`)
+
+        // Mensagem mais informativa para rate limit
+        let errorMsg = err.message
+        if (err.message?.includes('429') || err.code === 429) {
+          errorMsg = 'Rate limit do Twitter. Aguarde 1 minuto e tente novamente.'
+        }
+        await telegramBot.sendMessage(chatId, `❌ Erro: ${errorMsg}`)
       }
     })
 

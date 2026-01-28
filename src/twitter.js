@@ -9,12 +9,37 @@ export function createTwitterClient() {
   })
 }
 
-export async function postTweet(client, text) {
-  const { data } = await client.v2.tweet(text)
-  return {
-    id: data.id,
-    text: data.text,
-    url: `https://x.com/${process.env.X_USERNAME}/status/${data.id}`
+// Delay helper
+const delay = ms => new Promise(r => setTimeout(r, ms))
+
+// Track last post time to avoid rate limits
+let lastPostTime = 0
+const MIN_DELAY_BETWEEN_POSTS = 5000 // 5 segundos entre posts
+
+export async function postTweet(client, text, retries = 2) {
+  // Garantir delay minimo entre posts
+  const now = Date.now()
+  const timeSinceLastPost = now - lastPostTime
+  if (timeSinceLastPost < MIN_DELAY_BETWEEN_POSTS) {
+    await delay(MIN_DELAY_BETWEEN_POSTS - timeSinceLastPost)
+  }
+
+  try {
+    const { data } = await client.v2.tweet(text)
+    lastPostTime = Date.now()
+    return {
+      id: data.id,
+      text: data.text,
+      url: `https://x.com/${process.env.X_USERNAME}/status/${data.id}`
+    }
+  } catch (err) {
+    // Rate limit - aguarda e tenta novamente
+    if (err.code === 429 && retries > 0) {
+      console.log(`⏳ Rate limit atingido, aguardando 60s...`)
+      await delay(60000) // Aguarda 1 minuto
+      return postTweet(client, text, retries - 1)
+    }
+    throw err
   }
 }
 
