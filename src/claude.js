@@ -17,11 +17,12 @@ ESTILO DE ESCRITA:
 - Fale como se estivesse dando conselho a um amigo
 - Seja direto - sem rodeios corporativos
 
-REGRAS TECNICAS:
-- Maximo 280 caracteres (sem contar hashtags)
+REGRAS TECNICAS OBRIGATORIAS:
+- MAXIMO 250 CARACTERES NO TOTAL (incluindo hashtags e tudo mais)
+- Seja CONCISO - menos e mais
 - Dados concretos dao credibilidade (numeros, %, valores)
 - Maximo 1 emoji, so se agregar
-- 2-3 hashtags relevantes NO FINAL
+- 2-3 hashtags curtas NO FINAL
 
 O QUE EVITAR:
 - Noticiar sem opinar ("X subiu 5%" - e dai?)
@@ -47,7 +48,7 @@ HASHTAGS - REGRAS:
 O post DEVE terminar com 2-3 hashtags relevantes ao conteudo especifico.
 `
 
-export async function generatePost(topic, newsContext, angle, learningContext = null) {
+export async function generatePost(topic, newsContext, angle, learningContext = null, retries = 2) {
   // Combina system prompt com aprendizado de engajamento
   let fullSystemPrompt = SYSTEM_PROMPT
   if (learningContext) {
@@ -68,11 +69,19 @@ ${newsContext}
 ANGULO/INSIGHT SUGERIDO:
 ${angle}
 
-Crie UM post. Retorne APENAS o texto, nada mais.`
+Crie UM post com MAXIMO 250 caracteres. Retorne APENAS o texto, nada mais.`
     }]
   })
 
-  return message.content[0].text.trim()
+  const post = message.content[0].text.trim()
+
+  // Validar tamanho - se muito longo, regenera
+  if (post.length > 280 && retries > 0) {
+    console.log(`   ⚠️ Post muito longo (${post.length} chars), regenerando...`)
+    return generatePost(topic, newsContext, angle, learningContext, retries - 1)
+  }
+
+  return post
 }
 
 export async function generateMultiplePosts(topic, newsContext, angles) {

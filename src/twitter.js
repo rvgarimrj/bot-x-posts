@@ -14,7 +14,7 @@ const delay = ms => new Promise(r => setTimeout(r, ms))
 
 // Track last post time to avoid rate limits
 let lastPostTime = 0
-const MIN_DELAY_BETWEEN_POSTS = 5000 // 5 segundos entre posts
+const MIN_DELAY_BETWEEN_POSTS = 10000 // 10 segundos entre posts
 
 export async function postTweet(client, text, retries = 2) {
   // Garantir delay minimo entre posts
@@ -34,9 +34,9 @@ export async function postTweet(client, text, retries = 2) {
     }
   } catch (err) {
     // Rate limit - aguarda e tenta novamente
-    if (err.code === 429 && retries > 0) {
-      console.log(`⏳ Rate limit atingido, aguardando 60s...`)
-      await delay(60000) // Aguarda 1 minuto
+    if ((err.code === 429 || err.message?.includes('429')) && retries > 0) {
+      console.log(`⏳ Rate limit atingido, aguardando 2 minutos...`)
+      await delay(120000) // Aguarda 2 minutos
       return postTweet(client, text, retries - 1)
     }
     throw err
