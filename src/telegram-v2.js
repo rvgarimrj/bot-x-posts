@@ -5,9 +5,22 @@ let bot = null
 
 function getBot() {
   if (!bot) {
-    bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: false })
+    bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, {
+      polling: false,
+      request: {
+        timeout: 10000  // 10 segundos timeout para requests
+      }
+    })
   }
   return bot
+}
+
+// Helper para adicionar timeout a promises
+function withTimeout(promise, ms, fallback = null) {
+  return Promise.race([
+    promise,
+    new Promise(resolve => setTimeout(() => resolve(fallback), ms))
+  ])
 }
 
 // Escapa HTML para evitar erros de parsing
@@ -263,24 +276,24 @@ export async function waitForApproval(posts, onPublish, onRegenerate) {
         } else if (query.data === 'post_all') {
           resolved = true
           clearTimeout(timeout)
+          console.log('🚀 Iniciando postagem de todos...')
 
-          // Tenta responder callback (pode falhar se muito antigo)
-          try {
-            await telegramBot.answerCallbackQuery(query.id, { text: '🚀 Postando todos...' })
-          } catch (e) {
-            console.log('⚠️ Callback query expirado, continuando...')
-          }
+          // Responde callback com timeout de 5s (pode falhar se antigo)
+          await withTimeout(
+            telegramBot.answerCallbackQuery(query.id, { text: '🚀 Postando todos...' }).catch(() => {}),
+            5000
+          )
 
-          // Tenta enviar mensagem (com timeout)
-          try {
-            await telegramBot.sendMessage(chatId,
+          // Envia mensagem com timeout de 10s
+          await withTimeout(
+            telegramBot.sendMessage(chatId,
               `🚀 <b>Postando ${posts.length} posts...</b>\n\n<i>Aguarde confirmacao de cada um</i>`,
               { parse_mode: 'HTML' }
-            )
-          } catch (e) {
-            console.log('⚠️ Erro ao enviar mensagem, continuando...')
-          }
+            ).catch(() => {}),
+            10000
+          )
 
+          console.log('   Mensagem enviada, limpando e retornando...')
           cleanup()
           resolve({ success: true, action: 'post_all', posts, postedIndexes: Array.from(postedIndexes) })
 
