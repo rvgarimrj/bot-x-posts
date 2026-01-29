@@ -191,31 +191,7 @@ Exemplo: "Claude Code tem 2 features desligadas por padrao que mudam tudo" (sem 
     source: vibeCodingAnalysis?.source || 'HN/Reddit'
   }
 
-  // IA (Inteligencia Artificial)
-  console.log('   Buscando: IA...')
-  const aiReddit = await fetchRedditHot('artificial')
-  const localLlamaReddit = await fetchRedditHot('LocalLLaMA')
-
-  // Filtra HN por IA geral (nao coding)
-  const aiNews = hnStories.filter(item =>
-    /openai|anthropic|claude|gpt|gemini|llama|mistral|ai|machine learning|neural|model/i.test(item.title) &&
-    !/coding|cursor|copilot|developer|programming/i.test(item.title)
-  )
-
-  const iaAnalysis = await analyzeWithClaude('inteligencia artificial e LLMs', {
-    hackerNews: aiNews.slice(0, 5),
-    redditAI: aiReddit.slice(0, 5),
-    redditLocalLLaMA: localLlamaReddit.slice(0, 5),
-    note: 'Foque em lancamentos de modelos, OpenAI, Anthropic, Google, Meta, benchmarks, AGI, regulacao de IA'
-  })
-  curated.ia = {
-    context: iaAnalysis?.mainNews || 'Sem dados',
-    data: iaAnalysis?.keyData || iaAnalysis?.data || [],
-    angles: formatAngles(iaAnalysis?.angles) || ['Analise do mercado de IA'],
-    source: iaAnalysis?.source || 'HN/Reddit'
-  }
-
-  console.log('✅ Curadoria completa')
+  console.log('✅ Curadoria completa (3 topicos: crypto, investing, vibeCoding)')
   return curated
 }
 
@@ -238,12 +214,6 @@ export function getFallbackContent() {
       context: 'AI coding tools evoluindo rapidamente',
       data: ['Claude Code', 'Cursor', 'Produtividade'],
       angles: ['[TIP_TEASE] Feature escondida que muda tudo... → Revela que existe mas gera curiosidade'],
-      source: 'Tech'
-    },
-    ia: {
-      context: 'Corrida de LLMs entre OpenAI, Anthropic, Google',
-      data: ['Novos modelos', 'Custos', 'Benchmarks'],
-      angles: ['[CONEXAO] Enquanto discutem qual modelo e melhor... → Quem realmente ganha'],
       source: 'Tech'
     }
   }

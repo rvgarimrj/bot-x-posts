@@ -1,0 +1,328 @@
+/**
+ * Puppeteer integration for X (Twitter) posting
+ * Conecta ao Chrome em modo debug e posta como humano
+ */
+
+import puppeteer from 'puppeteer-core'
+
+// Delays de digitacao humana (em ms)
+const TYPING_DELAY = { min: 50, max: 120 }
+const DELAY_BETWEEN_POSTS_MS = 60000  // 60 segundos
+
+/**
+ * Conecta ao Chrome na porta debug
+ */
+async function connectToChrome() {
+  try {
+    const browser = await puppeteer.connect({
+      browserURL: 'http://localhost:9222',
+      defaultViewport: null
+    })
+    return browser
+  } catch (err) {
+    console.error('Erro ao conectar ao Chrome:', err.message)
+    throw new Error('Chrome nao esta rodando em modo debug na porta 9222')
+  }
+}
+
+/**
+ * Digita texto como humano (com delays variaveis)
+ */
+async function typeHuman(page, text) {
+  for (const char of text) {
+    await page.keyboard.type(char, {
+      delay: Math.random() * (TYPING_DELAY.max - TYPING_DELAY.min) + TYPING_DELAY.min
+    })
+
+    // Pausa maior apos pontuacao
+    if (['.', ',', '!', '?', ';', ':'].includes(char)) {
+      await new Promise(r => setTimeout(r, Math.random() * 300 + 100))
+    }
+  }
+}
+
+/**
+ * Posta um tweet no X
+ * @param {string} text - Texto do post
+ * @param {boolean} keepBrowserOpen - Se true, nao desconecta do browser
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+export async function postTweet(text, keepBrowserOpen = true) {
+  let browser = null
+
+  try {
+    console.log('🔌 Conectando ao Chrome...')
+    browser = await connectToChrome()
+
+    // Pega todas as paginas abertas
+    const pages = await browser.pages()
+
+    // Procura uma aba do X ou cria uma nova
+    let page = pages.find(p => p.url().includes('x.com') || p.url().includes('twitter.com'))
+
+    if (!page) {
+      // Cria nova aba (nao fecha as existentes)
+      console.log('📄 Abrindo nova aba do X...')
+      page = await browser.newPage()
+      await page.goto('https://x.com', { waitUntil: 'networkidle2', timeout: 30000 })
+      await new Promise(r => setTimeout(r, 2000))
+    } else {
+      console.log('📄 Usando aba existente do X...')
+      // Garante que esta na home
+      if (!page.url().includes('x.com/home') && !page.url().includes('x.com/compose')) {
+        await page.goto('https://x.com/home', { waitUntil: 'networkidle2', timeout: 30000 })
+        await new Promise(r => setTimeout(r, 2000))
+      }
+    }
+
+    // Verifica se esta logado (procura o botao de postar)
+    const isLoggedIn = await page.$('[data-testid="SideNav_NewTweet_Button"]') ||
+                       await page.$('[data-testid="tweetButtonInline"]') ||
+                       await page.$('a[href="/compose/post"]')
+
+    if (!isLoggedIn) {
+      throw new Error('Nao esta logado no X. Faca login no Chrome primeiro.')
+    }
+
+    console.log('✅ Logado no X')
+
+    // Tenta clicar no botao de novo post primeiro (mais rapido)
+    console.log('📝 Abrindo composer...')
+    let composerOpened = false
+
+    // Tenta clicar no botao de post na sidebar
+    const postBtnSelectors = [
+      '[data-testid="SideNav_NewTweet_Button"]',
+      'a[href="/compose/post"]',
+      '[aria-label="Post"]',
+      '[aria-label="Postar"]'
+    ]
+
+    for (const selector of postBtnSelectors) {
+      const btn = await page.$(selector)
+      if (btn) {
+        console.log(`   Clicando em: ${selector}`)
+        await btn.click()
+        await new Promise(r => setTimeout(r, 2000))
+        composerOpened = true
+        break
+      }
+    }
+
+    // Se nao encontrou botao, navega para /compose/post
+    if (!composerOpened) {
+      console.log('   Navegando para /compose/post...')
+      await page.goto('https://x.com/compose/post', { waitUntil: 'domcontentloaded', timeout: 30000 })
+      await new Promise(r => setTimeout(r, 3000))
+    }
+
+    // Espera um pouco mais para o modal carregar completamente
+    await new Promise(r => setTimeout(r, 2000))
+
+    // Encontra o campo de texto - tenta varios seletores
+    console.log('🔍 Procurando campo de texto...')
+    let textbox = null
+    const selectors = [
+      '[data-testid="tweetTextarea_0"]',
+      '.public-DraftStyleDefault-block',
+      '[data-testid="tweetTextarea_0_label"]',
+      '[role="textbox"][data-testid="tweetTextarea_0"]',
+      '[role="textbox"]',
+      '.public-DraftEditor-content',
+      '[contenteditable="true"]',
+      'div[data-contents="true"]',
+      '.DraftEditor-root',
+      '[data-offset-key]'
+    ]
+
+    // Tenta cada seletor com pequeno delay
+    for (const selector of selectors) {
+      textbox = await page.$(selector)
+      if (textbox) {
+        console.log(`   ✅ Encontrou: ${selector}`)
+        break
+      }
+      await new Promise(r => setTimeout(r, 200))
+    }
+
+    // Se nao achou, espera mais e tenta de novo
+    if (!textbox) {
+      console.log('   Esperando mais 3s...')
+      await new Promise(r => setTimeout(r, 3000))
+      for (const selector of selectors) {
+        textbox = await page.$(selector)
+        if (textbox) {
+          console.log(`   ✅ Encontrou (2a tentativa): ${selector}`)
+          break
+        }
+      }
+    }
+
+    if (!textbox) {
+      console.log('❌ Nao encontrou campo de texto. Seletores testados:', selectors.join(', '))
+      throw new Error('Nao encontrou campo de texto do post')
+    }
+
+    // Clica no campo
+    console.log('⌨️ Inserindo texto...')
+    await textbox.click()
+    await new Promise(r => setTimeout(r, 500))
+
+    // Limpa qualquer texto existente (Ctrl+A, Delete)
+    await page.keyboard.down('Meta')  // Cmd no Mac
+    await page.keyboard.press('a')
+    await page.keyboard.up('Meta')
+    await page.keyboard.press('Backspace')
+    await new Promise(r => setTimeout(r, 500))
+
+    // Digita caractere por caractere com delay variavel (parece humano)
+    console.log('   Digitando texto (humanizado)...')
+    let charCount = 0
+    for (const char of text) {
+      await page.keyboard.type(char)
+      charCount++
+
+      // Delay base: 70-130ms
+      let delay = Math.random() * 60 + 70
+
+      // Pausa maior apos pontuacao (200-500ms)
+      if (['.', ',', '!', '?', ';', ':'].includes(char)) {
+        delay = Math.random() * 300 + 200
+      }
+
+      // Pausa aleatoria "pensando" a cada ~30 chars (1-2 segundos)
+      if (charCount % 30 === 0 && Math.random() > 0.5) {
+        delay += Math.random() * 1000 + 1000
+        console.log('   ... pensando ...')
+      }
+
+      await new Promise(r => setTimeout(r, delay))
+    }
+
+    // Espera antes de postar (como se estivesse relendo) - 2-4 segundos
+    console.log('   Relendo antes de postar...')
+    await new Promise(r => setTimeout(r, Math.random() * 2000 + 2000))
+
+    console.log('   ✅ Texto inserido')
+
+    // Procura botao Postar
+    console.log('🔍 Procurando botao Postar...')
+    let postBtn = null
+    const btnSelectors = [
+      '[data-testid="tweetButton"]',
+      '[data-testid="tweetButtonInline"]',
+      'button[data-testid="tweetButton"]',
+      '[role="button"][data-testid="tweetButton"]'
+    ]
+
+    for (const selector of btnSelectors) {
+      postBtn = await page.$(selector)
+      if (postBtn) {
+        console.log(`   ✅ Encontrou: ${selector}`)
+        break
+      }
+    }
+
+    if (!postBtn) {
+      throw new Error('Nao encontrou botao de postar')
+    }
+
+    // Espera botao estar habilitado
+    await new Promise(r => setTimeout(r, 1000))
+
+    // Clica no botao Postar usando evaluate (mais confiavel)
+    console.log('🚀 Clicando em Postar...')
+    await page.evaluate((sel) => {
+      const btn = document.querySelector(sel)
+      if (btn) {
+        btn.click()
+        console.log('Clicou no botao')
+      }
+    }, '[data-testid="tweetButton"]')
+
+    // Aguarda um pouco
+    await new Promise(r => setTimeout(r, 2000))
+
+    // Tenta clicar novamente se ainda existir (as vezes precisa 2 cliques)
+    const stillExists = await page.$('[data-testid="tweetButton"]')
+    if (stillExists) {
+      console.log('   Clicando novamente...')
+      await stillExists.click()
+      await new Promise(r => setTimeout(r, 3000))
+    }
+
+    // Verifica se modal fechou (indica sucesso)
+    const modalClosed = !(await page.$('[data-testid="tweetTextarea_0"]'))
+    if (modalClosed) {
+      console.log('   ✅ Modal fechou - post enviado!')
+    } else {
+      console.log('   ⚠️ Modal ainda aberta - verificar manualmente')
+    }
+
+    console.log('✅ Post publicado!')
+
+    // NAO desconecta - mantem browser aberto
+    if (!keepBrowserOpen && browser) {
+      browser.disconnect()
+    }
+
+    return { success: true }
+
+  } catch (err) {
+    console.error('❌ Erro ao postar:', err.message)
+
+    // Desconecta em caso de erro (mas nao fecha)
+    if (browser) {
+      browser.disconnect()
+    }
+
+    return { success: false, error: err.message }
+  }
+}
+
+/**
+ * Posta multiplos tweets com delay entre eles
+ * @param {Array<{post: string, topic: string}>} posts
+ * @param {function} onProgress - Callback (index, total, success)
+ */
+export async function postMultipleTweets(posts, onProgress = null) {
+  const results = []
+
+  for (let i = 0; i < posts.length; i++) {
+    const post = posts[i]
+
+    console.log(`\n📤 Postando [${i + 1}/${posts.length}] ${post.topic}...`)
+
+    const result = await postTweet(post.post, true)
+    results.push({ ...result, index: i, topic: post.topic })
+
+    if (onProgress) {
+      await onProgress(i, posts.length, result.success)
+    }
+
+    // Delay entre posts (exceto no ultimo)
+    if (i < posts.length - 1) {
+      console.log(`⏳ Aguardando ${DELAY_BETWEEN_POSTS_MS / 1000}s antes do proximo...`)
+      await new Promise(r => setTimeout(r, DELAY_BETWEEN_POSTS_MS))
+    }
+  }
+
+  return results
+}
+
+/**
+ * Verifica se Chrome esta conectado
+ */
+export async function checkChromeConnection() {
+  try {
+    const browser = await puppeteer.connect({
+      browserURL: 'http://localhost:9222',
+      defaultViewport: null
+    })
+    const version = await browser.version()
+    browser.disconnect()
+    return { connected: true, version }
+  } catch {
+    return { connected: false, version: null }
+  }
+}

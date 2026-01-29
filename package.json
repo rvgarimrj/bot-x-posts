@@ -17,6 +17,7 @@
     "dotenv": "^17.2.3",
     "node-cron": "^4.2.1",
     "node-telegram-bot-api": "^0.67.0",
+    "puppeteer-core": "^24.36.1",
     "twitter-api-v2": "^1.29.0"
   }
 }
