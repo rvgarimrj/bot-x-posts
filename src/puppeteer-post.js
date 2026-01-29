@@ -56,24 +56,48 @@ export async function postTweet(text, keepBrowserOpen = true) {
 
     // Pega todas as paginas abertas
     const pages = await browser.pages()
+    console.log(`   ${pages.length} abas encontradas`)
 
-    // Procura uma aba do X ou cria uma nova
-    let page = pages.find(p => p.url().includes('x.com') || p.url().includes('twitter.com'))
+    // Procura uma aba do X que esteja LOGADA (tem botao de postar)
+    let page = null
+    for (const p of pages) {
+      const url = p.url()
+      if (url.includes('x.com') || url.includes('twitter.com')) {
+        // Verifica se esta logada (nao esta na pagina de login)
+        if (url.includes('/login') || url.includes('/i/flow/login')) {
+          console.log(`   Aba ${url} - pagina de login, pulando...`)
+          continue
+        }
 
-    if (!page) {
-      // Cria nova aba (nao fecha as existentes)
-      console.log('📄 Abrindo nova aba do X...')
-      page = await browser.newPage()
-      await page.goto('https://x.com', { waitUntil: 'networkidle2', timeout: 30000 })
-      await new Promise(r => setTimeout(r, 2000))
-    } else {
-      console.log('📄 Usando aba existente do X...')
-      // Garante que esta na home
-      if (!page.url().includes('x.com/home') && !page.url().includes('x.com/compose')) {
-        await page.goto('https://x.com/home', { waitUntil: 'networkidle2', timeout: 30000 })
-        await new Promise(r => setTimeout(r, 2000))
+        // Verifica se tem o botao de postar (indica que esta logado)
+        const hasPostBtn = await p.$('[data-testid="SideNav_NewTweet_Button"]')
+        if (hasPostBtn) {
+          console.log(`   ✅ Aba logada encontrada: ${url}`)
+          page = p
+          break
+        } else {
+          console.log(`   Aba ${url} - sem botao de post, verificando proxima...`)
+        }
       }
     }
+
+    if (!page) {
+      // Nenhuma aba logada encontrada - tenta a primeira do X que nao seja login
+      page = pages.find(p => {
+        const url = p.url()
+        return (url.includes('x.com') || url.includes('twitter.com')) &&
+               !url.includes('/login') && !url.includes('/i/flow/login')
+      })
+
+      if (!page) {
+        throw new Error('Nenhuma aba do X logada encontrada. Abra o X.com e faca login.')
+      }
+    }
+
+    console.log('📄 Usando aba:', page.url())
+
+    // Traz a aba para frente
+    await page.bringToFront()
 
     // Verifica se esta logado (procura o botao de postar)
     const isLoggedIn = await page.$('[data-testid="SideNav_NewTweet_Button"]') ||

@@ -1,4 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api'
+import { postTweet, checkChromeConnection } from './puppeteer-post.js'
 
 let bot = null
 
@@ -115,12 +116,26 @@ export async function waitForApproval(posts, onPublish, onRegenerate) {
         resolved = true
         console.log('⏰ Timeout atingido - postando todos automaticamente...')
 
+        // Filtra apenas posts que ainda NAO foram publicados
+        const pendingPosts = posts.filter((_, i) => !postedIndexes.has(i))
+
+        if (pendingPosts.length === 0) {
+          console.log('   Todos os posts ja foram publicados, ignorando timeout')
+          await telegramBot.sendMessage(chatId,
+            '⏰ <b>Tempo esgotado!</b>\n\n✅ Todos os posts ja foram publicados manualmente.',
+            { parse_mode: 'HTML' }
+          )
+          cleanup()
+          resolve({ success: true, action: 'all_already_posted', posts, postedIndexes: Array.from(postedIndexes) })
+          return
+        }
+
         await telegramBot.sendMessage(chatId,
-          '⏰ <b>Tempo esgotado!</b>\n\n🚀 Postando todos automaticamente via Playwright...',
+          `⏰ <b>Tempo esgotado!</b>\n\n🚀 Postando ${pendingPosts.length} posts restantes automaticamente via Playwright...`,
           { parse_mode: 'HTML' }
         )
 
-        // Retorna acao de postar todos
+        // Retorna acao de postar todos (com info de quais ja foram postados)
         cleanup()
         resolve({ success: true, action: 'timeout_post_all', posts, postedIndexes: Array.from(postedIndexes) })
       }
@@ -189,11 +204,59 @@ export async function waitForApproval(posts, onPublish, onRegenerate) {
             { parse_mode: 'HTML' }
           )
 
+          // Marca como postado ANTES de postar (evita duplo clique)
           postedIndexes.add(index)
 
-          // Retorna para o caller postar via Playwright
-          cleanup()
-          resolve({ success: true, action: 'post_single', postIndex: index, post, postedIndexes: Array.from(postedIndexes) })
+          // Posta diretamente via Puppeteer (NAO sai do loop)
+          try {
+            const chromeStatus = await checkChromeConnection()
+            if (!chromeStatus.connected) {
+              await telegramBot.sendMessage(chatId,
+                `❌ <b>[${index + 1}/${posts.length}]</b> Chrome nao conectado na porta 9222`,
+                { parse_mode: 'HTML' }
+              )
+              postedIndexes.delete(index) // Remove da lista se falhou
+              return
+            }
+
+            console.log(`🚀 Postando post ${index + 1} via Puppeteer...`)
+            const postResult = await postTweet(post.post, true)
+
+            if (postResult.success) {
+              await telegramBot.sendMessage(chatId,
+                `✅ <b>[${index + 1}/${posts.length}] ${post.topic.toUpperCase()}</b> publicado!`,
+                { parse_mode: 'HTML' }
+              )
+              console.log(`✅ Post ${index + 1} publicado!`)
+            } else {
+              await telegramBot.sendMessage(chatId,
+                `❌ <b>[${index + 1}/${posts.length}] ${post.topic.toUpperCase()}</b> falhou: ${postResult.error}`,
+                { parse_mode: 'HTML' }
+              )
+              console.log(`❌ Post ${index + 1} falhou:`, postResult.error)
+            }
+          } catch (err) {
+            await telegramBot.sendMessage(chatId,
+              `❌ <b>[${index + 1}/${posts.length}]</b> Erro: ${err.message}`,
+              { parse_mode: 'HTML' }
+            )
+            console.error(`❌ Erro ao postar ${index + 1}:`, err.message)
+          }
+
+          // Verifica se TODOS os posts foram publicados
+          if (postedIndexes.size >= posts.length) {
+            console.log('✅ Todos os posts foram publicados!')
+            await telegramBot.sendMessage(chatId,
+              `✅ <b>Todos os ${posts.length} posts publicados!</b>`,
+              { parse_mode: 'HTML' }
+            )
+            cleanup()
+            resolve({ success: true, action: 'all_posted_individually', posts, postedIndexes: Array.from(postedIndexes) })
+            return
+          }
+
+          // CONTINUA AGUARDANDO mais acoes ou timeout
+          console.log(`   Aguardando mais acoes... (${postedIndexes.size}/${posts.length} publicados)`)
           return
 
         // POSTAR TODOS

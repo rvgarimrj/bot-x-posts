@@ -117,9 +117,27 @@ async function main() {
       process.exit(0)
     }
 
+    // TODOS JA POSTADOS (timeout mas usuario ja postou manualmente)
+    if (result.action === 'all_already_posted') {
+      console.log('\n✅ Todos os posts ja foram publicados anteriormente')
+      process.exit(0)
+    }
+
     // POSTAR TODOS (ou timeout)
     if (result.action === 'post_all' || result.action === 'timeout_post_all') {
-      console.log(`\n🚀 Postando ${allPosts.length} posts via Puppeteer...`)
+      // Filtra posts que ainda NAO foram publicados
+      const postedSet = new Set(result.postedIndexes || [])
+      const pendingPosts = allPosts.filter((_, i) => !postedSet.has(i))
+
+      if (pendingPosts.length === 0) {
+        console.log('\n✅ Todos os posts ja foram publicados anteriormente')
+        process.exit(0)
+      }
+
+      console.log(`\n🚀 Postando ${pendingPosts.length} posts via Puppeteer...`)
+      if (postedSet.size > 0) {
+        console.log(`   (${postedSet.size} posts ja publicados anteriormente, pulando)`)
+      }
 
       // Verifica Chrome
       const chromeStatus = await checkChromeConnection()
@@ -129,38 +147,21 @@ async function main() {
         process.exit(1)
       }
 
-      // Posta todos
-      const results = await postMultipleTweets(allPosts, async (index, total, success) => {
-        await sendPostConfirmation(index, total, allPosts[index].topic, success)
+      // Posta apenas os pendentes
+      const results = await postMultipleTweets(pendingPosts, async (index, total, success) => {
+        await sendPostConfirmation(index, total, pendingPosts[index].topic, success)
       })
 
       const successCount = results.filter(r => r.success).length
-      console.log(`\n✅ ${successCount}/${allPosts.length} posts publicados!`)
-      await sendNotification(`✅ <b>${successCount}/${allPosts.length}</b> posts publicados!`)
+      console.log(`\n✅ ${successCount}/${pendingPosts.length} posts publicados!`)
+      await sendNotification(`✅ <b>${successCount}/${pendingPosts.length}</b> posts publicados!`)
 
       process.exit(0)
     }
 
-    // POSTAR INDIVIDUAL
-    if (result.action === 'post_single') {
-      console.log(`\n🚀 Postando post ${result.postIndex + 1} via Puppeteer...`)
-
-      const chromeStatus = await checkChromeConnection()
-      if (!chromeStatus.connected) {
-        console.log('❌ Chrome nao conectado na porta 9222')
-        await sendNotification('❌ Chrome nao conectado. Abra com --remote-debugging-port=9222')
-        process.exit(1)
-      }
-
-      const postResult = await postTweet(result.post.post, true)
-      await sendPostConfirmation(result.postIndex, allPosts.length, result.post.topic, postResult.success)
-
-      if (postResult.success) {
-        console.log('✅ Post publicado!')
-      } else {
-        console.log('❌ Falhou:', postResult.error)
-      }
-
+    // TODOS POSTADOS INDIVIDUALMENTE (usuario clicou em cada um)
+    if (result.action === 'all_posted_individually') {
+      console.log('\n✅ Todos os posts foram publicados individualmente!')
       process.exit(0)
     }
 
