@@ -17,7 +17,7 @@ async function connectToChrome() {
     const browser = await puppeteer.connect({
       browserURL: 'http://localhost:9222',
       defaultViewport: null,
-      protocolTimeout: 120000  // 2 minutos de timeout para comandos
+      protocolTimeout: 180000  // 3 minutos de timeout para comandos
     })
     return browser
   } catch (err) {

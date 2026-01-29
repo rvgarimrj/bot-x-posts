@@ -51,13 +51,13 @@ async function runBot(topics = ['crypto', 'investing', 'vibeCoding']) {
   console.log(`   Topicos: ${topics.join(', ')}`)
 
   try {
-    await sendNotification(`🤖 <b>Bot-X-Posts</b>\n\n⏰ Gerando ${topics.length} posts das ${hour}h...\n📋 Topicos: ${topics.join(', ')}\n\nAguarde as opcoes.`)
+    await sendNotification(`🤖 <b>Bot-X-Posts</b>\n\n⏰ Gerando ${topics.length} posts das ${hour}h...\n📋 Topicos: ${topics.join(', ')}\n\n📤 Serao publicados em 2 minutos apos preview.`)
   } catch (err) {
     console.error('Erro ao notificar inicio:', err.message)
   }
 
-  // Executa o script interativo v2 como processo filho com topicos
-  const child = spawn('node', ['scripts/interactive-post-v2.js', ...topics], {
+  // Executa o script auto-post (simplificado - sem callbacks do Telegram)
+  const child = spawn('node', ['scripts/auto-post.js', ...topics], {
     cwd: process.cwd(),
     stdio: 'inherit',
     env: process.env
