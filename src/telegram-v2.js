@@ -264,12 +264,22 @@ export async function waitForApproval(posts, onPublish, onRegenerate) {
           resolved = true
           clearTimeout(timeout)
 
-          await telegramBot.answerCallbackQuery(query.id, { text: '🚀 Postando todos...' })
+          // Tenta responder callback (pode falhar se muito antigo)
+          try {
+            await telegramBot.answerCallbackQuery(query.id, { text: '🚀 Postando todos...' })
+          } catch (e) {
+            console.log('⚠️ Callback query expirado, continuando...')
+          }
 
-          await telegramBot.sendMessage(chatId,
-            `🚀 <b>Postando ${posts.length} posts...</b>\n\n<i>Aguarde confirmacao de cada um</i>`,
-            { parse_mode: 'HTML' }
-          )
+          // Tenta enviar mensagem (com timeout)
+          try {
+            await telegramBot.sendMessage(chatId,
+              `🚀 <b>Postando ${posts.length} posts...</b>\n\n<i>Aguarde confirmacao de cada um</i>`,
+              { parse_mode: 'HTML' }
+            )
+          } catch (e) {
+            console.log('⚠️ Erro ao enviar mensagem, continuando...')
+          }
 
           cleanup()
           resolve({ success: true, action: 'post_all', posts, postedIndexes: Array.from(postedIndexes) })
