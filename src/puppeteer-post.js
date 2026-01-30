@@ -1,6 +1,11 @@
 /**
  * Puppeteer integration for X (Twitter) posting
  * Conecta ao Chrome em modo debug e posta como humano
+ *
+ * Anti-suspensão: Chrome deve rodar com flags:
+ * --disable-background-timer-throttling
+ * --disable-backgrounding-occluded-windows
+ * --disable-renderer-backgrounding
  */
 
 import puppeteer from 'puppeteer-core'
@@ -9,20 +14,67 @@ import puppeteer from 'puppeteer-core'
 const TYPING_DELAY = { min: 50, max: 120 }
 const DELAY_BETWEEN_POSTS_MS = 60000  // 60 segundos
 
+// Configurações de timeout e retry
+const MAX_CONNECTION_RETRIES = 3
+const RETRY_DELAY_MS = 5000
+const PROTOCOL_TIMEOUT = 120000  // 2 minutos
+const PAGE_TIMEOUT = 60000  // 1 minuto
+const MAX_TABS = 5  // Maximo de abas antes de limpar
+
 /**
- * Conecta ao Chrome na porta debug
+ * Conecta ao Chrome com retry automático
  */
 async function connectToChrome() {
+  for (let attempt = 1; attempt <= MAX_CONNECTION_RETRIES; attempt++) {
+    try {
+      console.log(`   Tentativa ${attempt}/${MAX_CONNECTION_RETRIES}...`)
+      const browser = await puppeteer.connect({
+        browserURL: 'http://127.0.0.1:9222',
+        defaultViewport: null,
+        protocolTimeout: PROTOCOL_TIMEOUT
+      })
+      return browser
+    } catch (err) {
+      const isTimeout = err.message.includes('timed out')
+
+      if (isTimeout && attempt < MAX_CONNECTION_RETRIES) {
+        console.log(`   ⚠️ Timeout na conexao, aguardando ${RETRY_DELAY_MS/1000}s...`)
+        await new Promise(r => setTimeout(r, RETRY_DELAY_MS))
+        continue
+      }
+
+      if (attempt === MAX_CONNECTION_RETRIES) {
+        console.error('Erro ao conectar ao Chrome:', err.message)
+        throw new Error('Chrome nao esta rodando em modo debug na porta 9222')
+      }
+    }
+  }
+}
+
+/**
+ * Fecha abas em excesso para liberar memoria
+ */
+async function closeExcessTabs(browser) {
   try {
-    const browser = await puppeteer.connect({
-      browserURL: 'http://localhost:9222',
-      defaultViewport: null,
-      protocolTimeout: 180000  // 3 minutos de timeout para comandos
-    })
-    return browser
-  } catch (err) {
-    console.error('Erro ao conectar ao Chrome:', err.message)
-    throw new Error('Chrome nao esta rodando em modo debug na porta 9222')
+    const pages = await Promise.race([
+      browser.pages(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
+    ])
+
+    if (pages.length > MAX_TABS) {
+      console.log(`   🧹 Fechando ${pages.length - MAX_TABS} abas em excesso...`)
+      // Fecha as mais antigas, mantendo as ultimas MAX_TABS
+      const toClose = pages.slice(0, pages.length - MAX_TABS)
+      for (const p of toClose) {
+        const url = p.url()
+        // Nao fecha a aba do X
+        if (!url.includes('x.com') && !url.includes('twitter.com')) {
+          await p.close().catch(() => {})
+        }
+      }
+    }
+  } catch (e) {
+    // Ignora erros - limpeza nao e critica
   }
 }
 
@@ -54,6 +106,9 @@ export async function postTweet(text, keepBrowserOpen = true) {
   try {
     console.log('🔌 Conectando ao Chrome...')
     browser = await connectToChrome()
+
+    // Limpa abas em excesso
+    await closeExcessTabs(browser)
 
     // Pega todas as paginas abertas
     const pages = await browser.pages()
@@ -96,6 +151,10 @@ export async function postTweet(text, keepBrowserOpen = true) {
     }
 
     console.log('📄 Usando aba:', page.url())
+
+    // Configura timeouts da pagina
+    page.setDefaultTimeout(PAGE_TIMEOUT)
+    page.setDefaultNavigationTimeout(PAGE_TIMEOUT)
 
     // Traz a aba para frente
     await page.bringToFront()
