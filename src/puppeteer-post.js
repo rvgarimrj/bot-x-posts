@@ -100,12 +100,16 @@ export async function postTweet(text, keepBrowserOpen = true) {
     // Traz a aba para frente
     await page.bringToFront()
 
-    // Verifica se esta logado (procura o botao de postar)
-    const isLoggedIn = await page.$('[data-testid="SideNav_NewTweet_Button"]') ||
-                       await page.$('[data-testid="tweetButtonInline"]') ||
-                       await page.$('a[href="/compose/post"]')
+    // Navega para /home para garantir estado limpo (fecha modais abertos)
+    console.log('🔄 Navegando para /home...')
+    await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 30000 })
+    await new Promise(r => setTimeout(r, 3000))  // Espera carregar completamente
 
-    if (!isLoggedIn) {
+    // Aguarda o botao de postar aparecer (indica que esta logado e carregou)
+    console.log('⏳ Aguardando pagina carregar...')
+    try {
+      await page.waitForSelector('[data-testid="SideNav_NewTweet_Button"]', { timeout: 15000 })
+    } catch (e) {
       throw new Error('Nao esta logado no X. Faca login no Chrome primeiro.')
     }
 

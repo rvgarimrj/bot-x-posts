@@ -6,6 +6,7 @@ import TelegramBot from 'node-telegram-bot-api'
 
 const WAIT_BEFORE_POST_MS = 2 * 60 * 1000  // 2 minutos para revisar
 const DELAY_BETWEEN_POSTS_MS = 60 * 1000   // 60 segundos entre posts
+const MAX_RETRIES = 2  // Tentativas extras em caso de falha
 
 // Topicos via argumento ou default
 const args = process.argv.slice(2)
@@ -14,16 +15,41 @@ const TOPICS = args.length > 0 ? args : ['crypto', 'investing', 'vibeCoding']
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: false })
 const chatId = process.env.TELEGRAM_CHAT_ID
 
-async function notify(message) {
+let cancelled = false
+
+async function notify(message, options = {}) {
   try {
-    await bot.sendMessage(chatId, message, { parse_mode: 'HTML', disable_web_page_preview: true })
+    return await bot.sendMessage(chatId, message, {
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+      ...options
+    })
   } catch (e) {
     console.log('⚠️ Erro ao enviar notificacao:', e.message)
+    return null
   }
 }
 
 function escapeHtml(text) {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+// Tenta postar com retry
+async function postWithRetry(post, maxRetries = MAX_RETRIES) {
+  for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
+    const result = await postTweet(post, true)
+
+    if (result.success) {
+      return result
+    }
+
+    if (attempt <= maxRetries) {
+      console.log(`   ⚠️ Tentativa ${attempt} falhou, aguardando 10s para retry...`)
+      await new Promise(r => setTimeout(r, 10000))
+    }
+  }
+
+  return { success: false, error: 'Falhou apos todas tentativas' }
 }
 
 async function main() {
@@ -71,11 +97,12 @@ async function main() {
 
   console.log(`   ✅ ${posts.length} posts gerados`)
 
-  // 3. Notificar no Telegram
+  // 3. Notificar no Telegram com botao de cancelar
   console.log('\n3. Enviando preview para Telegram...')
 
   let previewMsg = `🎯 <b>Posts das ${hour}h</b>\n\n`
-  previewMsg += `⏰ Serao publicados em 2 minutos\n\n`
+  previewMsg += `⏰ Serao publicados em 2 minutos\n`
+  previewMsg += `<i>Clique em Cancelar para nao publicar</i>\n\n`
 
   for (let i = 0; i < posts.length; i++) {
     const { topic, post } = posts[i]
@@ -83,13 +110,66 @@ async function main() {
     previewMsg += `${emoji} <b>[${i+1}] ${topic.toUpperCase()}</b>\n"${escapeHtml(post)}"\n\n`
   }
 
-  await notify(previewMsg)
+  // Envia com botao de cancelar
+  const previewResult = await notify(previewMsg, {
+    reply_markup: {
+      inline_keyboard: [[
+        { text: '❌ Cancelar Publicacao', callback_data: 'cancel_post' }
+      ]]
+    }
+  })
+
   console.log('   ✅ Preview enviado')
 
-  // 4. Aguardar 2 minutos
+  // 4. Aguardar 2 minutos (com polling para cancelamento)
   console.log(`\n4. Aguardando 2 minutos para revisao...`)
-  await notify('⏳ Publicando em 2 minutos...')
-  await new Promise(r => setTimeout(r, WAIT_BEFORE_POST_MS))
+
+  // Inicia polling temporario para capturar cancelamento
+  const pollingBot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, {
+    polling: {
+      interval: 1000,
+      params: { timeout: 5 }
+    }
+  })
+
+  pollingBot.on('callback_query', async (query) => {
+    if (query.data === 'cancel_post') {
+      cancelled = true
+      console.log('❌ Cancelamento recebido!')
+      try {
+        await pollingBot.answerCallbackQuery(query.id, { text: '❌ Publicacao cancelada!' })
+        await pollingBot.sendMessage(chatId, '❌ <b>Publicacao cancelada pelo usuario.</b>', { parse_mode: 'HTML' })
+      } catch (e) {
+        console.log('⚠️ Erro ao responder cancelamento:', e.message)
+      }
+    }
+  })
+
+  pollingBot.on('polling_error', () => {})  // Ignora erros de polling
+
+  // Aguarda 2 minutos ou cancelamento
+  const startTime = Date.now()
+  while (Date.now() - startTime < WAIT_BEFORE_POST_MS && !cancelled) {
+    await new Promise(r => setTimeout(r, 1000))
+  }
+
+  // Para polling
+  pollingBot.stopPolling()
+
+  if (cancelled) {
+    console.log('\n❌ Publicacao cancelada pelo usuario')
+    process.exit(0)
+  }
+
+  // Remove botao de cancelar
+  if (previewResult) {
+    try {
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+        chat_id: chatId,
+        message_id: previewResult.message_id
+      })
+    } catch (e) {}
+  }
 
   // 5. Postar
   console.log('\n5. Publicando posts...')
@@ -100,7 +180,7 @@ async function main() {
     const { topic, post } = posts[i]
     console.log(`\n📤 Postando [${i+1}/${posts.length}] ${topic}...`)
 
-    const result = await postTweet(post, true)
+    const result = await postWithRetry(post)
 
     if (result.success) {
       successCount++
