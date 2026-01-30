@@ -146,7 +146,19 @@ export async function postTweet(text, keepBrowserOpen = true) {
       })
 
       if (!page) {
-        throw new Error('Nenhuma aba do X logada encontrada. Abra o X.com e faca login.')
+        // Nenhuma aba do X encontrada - abre uma nova
+        console.log('   ⚠️ Nenhuma aba do X encontrada, abrindo nova...')
+        page = await browser.newPage()
+        page.setDefaultTimeout(PAGE_TIMEOUT)
+        page.setDefaultNavigationTimeout(PAGE_TIMEOUT)
+        await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 30000 })
+        await new Promise(r => setTimeout(r, 5000))
+
+        // Verifica se redirecionou para login
+        const currentUrl = page.url()
+        if (currentUrl.includes('/login') || currentUrl.includes('/i/flow/login')) {
+          throw new Error('Nao esta logado no X. Faca login no Chrome primeiro.')
+        }
       }
     }
 

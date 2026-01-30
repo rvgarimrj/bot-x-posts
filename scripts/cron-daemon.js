@@ -57,7 +57,9 @@ async function runBot(topics = ['crypto', 'investing', 'vibeCoding']) {
   }
 
   // Executa o script auto-post (simplificado - sem callbacks do Telegram)
-  const child = spawn('node', ['scripts/auto-post.js', ...topics], {
+  // Usa caminho absoluto para node (launchd nao tem PATH completo)
+  const nodePath = '/usr/local/bin/node'
+  const child = spawn(nodePath, ['scripts/auto-post.js', ...topics], {
     cwd: process.cwd(),
     stdio: 'inherit',
     env: process.env

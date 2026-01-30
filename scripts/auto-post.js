@@ -1,6 +1,6 @@
 import 'dotenv/config'
 import { generatePost } from '../src/claude.js'
-import { curateContent, getFallbackContent } from '../src/curate.js'
+import { curateContentV2, formatForPrompt, getFallbackContentV2 } from '../src/curate-v2.js'
 import { postTweet } from '../src/puppeteer-post.js'
 import TelegramBot from 'node-telegram-bot-api'
 
@@ -59,14 +59,26 @@ async function main() {
   console.log(`⏰ ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`)
   console.log(`📋 Topicos: ${TOPICS.join(', ')} (${TOPICS.length} posts)`)
 
-  // 1. Curadoria
-  console.log('\n1. Curando conteudo...')
+  // 1. Curadoria v2 (dados frescos + análise X)
+  console.log('\n1. Curando conteudo (v2 - dados frescos + X)...')
   let content
   try {
-    content = await curateContent()
+    content = await curateContentV2()
   } catch (err) {
+    console.log('   ⚠️ Erro na curadoria v2:', err.message)
     console.log('   ⚠️ Usando fallback')
-    content = getFallbackContent()
+    content = getFallbackContentV2()
+  }
+
+  // Mostrar resumo da curadoria
+  console.log('\n   📊 Resumo da curadoria:')
+  for (const topic of TOPICS) {
+    const data = content[topic]
+    if (data) {
+      const sentiment = data.sentiment || 'neutral'
+      const score = data.sentimentScore || 0
+      console.log(`      ${topic}: ${sentiment} (${score > 0 ? '+' : ''}${score})`)
+    }
   }
 
   // 2. Gerar posts
@@ -77,13 +89,20 @@ async function main() {
     const data = content[topic]
     if (!data) continue
 
-    const fullContext = `Noticia: ${data.context}\nDados: ${data.data.join(', ')}`
-    const angle = data.angles[0] || 'Analise'
+    // Formatar dados para o prompt
+    const fullContext = formatForPrompt(content, topic)
 
-    console.log(`   Gerando: ${topic}...`)
+    // Escolher melhor ângulo
+    let angle = 'Analise baseada nos dados'
+    if (data.angles && data.angles.length > 0) {
+      const a = data.angles[0]
+      angle = typeof a === 'string' ? a : `[${a.type}] ${a.hook} → ${a.insight}`
+    }
+
+    console.log(`   Gerando: ${topic} (sentimento: ${data.sentiment})...`)
     try {
       const post = await generatePost(topic, fullContext, angle, null)
-      posts.push({ topic, post })
+      posts.push({ topic, post, sentiment: data.sentiment })
     } catch (err) {
       console.log(`   ⚠️ Erro em ${topic}: ${err.message}`)
     }
@@ -105,9 +124,10 @@ async function main() {
   previewMsg += `<i>Clique em Cancelar para nao publicar</i>\n\n`
 
   for (let i = 0; i < posts.length; i++) {
-    const { topic, post } = posts[i]
+    const { topic, post, sentiment } = posts[i]
     const emoji = topic === 'crypto' ? '₿' : topic === 'investing' ? '📊' : '💻'
-    previewMsg += `${emoji} <b>[${i+1}] ${topic.toUpperCase()}</b>\n"${escapeHtml(post)}"\n\n`
+    const sentimentEmoji = sentiment === 'bullish' ? '🟢' : sentiment === 'bearish' ? '🔴' : '⚪'
+    previewMsg += `${emoji} <b>[${i+1}] ${topic.toUpperCase()}</b> ${sentimentEmoji}\n"${escapeHtml(post)}"\n\n`
   }
 
   // Envia com botao de cancelar
