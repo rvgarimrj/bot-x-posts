@@ -1,9 +1,45 @@
 import 'dotenv/config'
 import cron from 'node-cron'
-import { spawn } from 'child_process'
+import { spawn, execSync } from 'child_process'
 import { sendNotification } from '../src/telegram-v2.js'
+import fs from 'fs'
+import path from 'path'
 
 const TIMEZONE = 'America/Sao_Paulo'
+const PIDFILE = path.join(process.cwd(), 'logs', 'daemon.pid')
+
+// ==================== SINGLETON CHECK ====================
+// Garante que apenas uma instância do daemon rode
+function checkSingleton() {
+  try {
+    if (fs.existsSync(PIDFILE)) {
+      const oldPid = fs.readFileSync(PIDFILE, 'utf8').trim()
+      // Verifica se o processo ainda está rodando
+      try {
+        execSync(`ps -p ${oldPid} -o comm=`, { stdio: 'pipe' })
+        // Processo existe - verificar se é o mesmo script
+        const cmd = execSync(`ps -p ${oldPid} -o args=`, { stdio: 'pipe' }).toString()
+        if (cmd.includes('cron-daemon')) {
+          console.log(`⚠️ Daemon já rodando (PID ${oldPid}). Saindo...`)
+          process.exit(0)
+        }
+      } catch {
+        // Processo não existe mais - podemos continuar
+      }
+    }
+    // Salva nosso PID
+    fs.writeFileSync(PIDFILE, process.pid.toString())
+
+    // Cleanup ao sair
+    process.on('exit', () => fs.unlinkSync(PIDFILE).catch?.(() => {}))
+    process.on('SIGINT', () => process.exit(0))
+    process.on('SIGTERM', () => process.exit(0))
+  } catch (err) {
+    console.error('Erro no singleton check:', err.message)
+  }
+}
+
+checkSingleton()
 
 // Distribuicao de 8 posts/dia:
 // - 4 posts de vibeCoding (8h, 12h, 14h, 18h)
