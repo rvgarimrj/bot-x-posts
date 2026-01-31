@@ -197,6 +197,8 @@ curl -s http://localhost:9222/json/version
 - Retry automatico: 3 tentativas na conexao Chrome, 2 no post
 
 ## Historico de Commits
+- **2026-01-31 13:19** [`595d0e1`] Add singleton check to prevent duplicate daemon instances (scripts/cron-daemon.js)
+- **2026-01-31 11:07** [`c2e5217`] Change schedule from Mon-Fri to Mon-Sat (1-6) (.claude/CLAUDE.md,scripts/cron-daemon.js)
 - **2026-01-31 09:11** [`df9c934`] Document curadoria v2 with hashtags, authors, mentions in CLAUDE.md (.claude/CLAUDE.md)
 - **2026-01-31 09:07** [`99e6329`] Improve curate-v2: add authors, hashtags, mentions + optimize rate limits (scripts/test-curate-v2.js,src/curate-v2.js)
 - **2026-01-30 21:34** [`4afae02`] Update CLAUDE.md with commit history from hook (.claude/CLAUDE.md)
