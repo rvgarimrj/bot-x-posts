@@ -5,10 +5,18 @@ const anthropic = new Anthropic()
 
 // ==================== CONFIGURAÇÃO ====================
 
+// Queries otimizadas - uma query ampla por topico (menos requests = menos rate limit)
 const TWITTER_SEARCHES = {
-  crypto: ['#Bitcoin', '#BTC', '#Crypto', '#ETF Bitcoin', 'Bitcoin ETF'],
-  investing: ['#NASDAQ', '#SP500', 'earnings', '$AAPL', '$NVDA', '$TSLA'],
-  vibeCoding: ['#ClaudeCode', '#Cursor', 'AI coding', 'vibe coding', 'Copilot']
+  crypto: ['Bitcoin OR #BTC OR #crypto -filter:retweets'],
+  investing: ['stocks OR #SP500 OR $NVDA OR $TSLA -filter:retweets'],
+  vibeCoding: ['Claude Code OR Cursor AI OR "vibe coding" OR "AI coding" -filter:retweets']
+}
+
+// Contas influentes para cada topico (para referencias)
+const INFLUENCER_ACCOUNTS = {
+  crypto: ['@sabortoothpete', '@CryptoCapo_', '@WClementeIII', '@documentingbtc', '@BitcoinMagazine'],
+  investing: ['@jimcramer', '@StockMKTNewz', '@unusual_whales', '@DeItaone', '@zaborowski'],
+  vibeCoding: ['@kaborowski', '@alexalbert__', '@cursor_ai', '@AnthropicAI', '@OpenAI']
 }
 
 // ==================== FONTES DE DADOS ====================
@@ -99,19 +107,71 @@ async function fetchStockData() {
 
 // Cache simples para evitar rate limits
 const twitterCache = new Map()
-const CACHE_TTL = 15 * 60 * 1000 // 15 minutos
+const CACHE_TTL = 60 * 60 * 1000 // 60 minutos - cache mais longo
+const STALE_CACHE_TTL = 4 * 60 * 60 * 1000 // 4 horas - usa cache velho se rate limited
 let lastTwitterCall = 0
-const MIN_DELAY_BETWEEN_CALLS = 2000 // 2 segundos entre chamadas
+let isRateLimited = false
+let rateLimitResetTime = 0
+const MIN_DELAY_BETWEEN_CALLS = 3000 // 3 segundos entre chamadas
+
+// WOEID para trending (23424768 = Brasil, 1 = Worldwide)
+const TRENDING_WOEID = 1 // Worldwide
+
+/**
+ * Busca trending topics globais do Twitter (requer acesso elevado)
+ * Fallback: retorna null se não disponível
+ */
+async function fetchTwitterTrends() {
+  try {
+    const client = new TwitterApi({
+      appKey: process.env.X_API_KEY,
+      appSecret: process.env.X_API_KEY_SECRET,
+      accessToken: process.env.X_ACCESS_TOKEN,
+      accessSecret: process.env.X_ACCESS_TOKEN_SECRET,
+    })
+
+    // Twitter API v1.1 trends (requer elevated access)
+    const trends = await client.v1.trendsByPlace(TRENDING_WOEID)
+
+    if (trends && trends[0]?.trends) {
+      return trends[0].trends.slice(0, 10).map(t => ({
+        name: t.name,
+        tweetVolume: t.tweet_volume,
+        url: t.url
+      }))
+    }
+    return null
+  } catch (err) {
+    // Trends API requer elevated access - não é crítico
+    if (err.code === 403 || err.message?.includes('403')) {
+      console.log('      ℹ️ Trends API requer elevated access (ignorando)')
+    } else if (err.code !== 429) {
+      console.log('      ⚠️ Trends API indisponível:', err.message?.substring(0, 50))
+    }
+    return null
+  }
+}
 
 /**
  * Busca tweets populares sobre um tópico (com cache e rate limit handling)
  */
 async function searchTwitter(query, limit = 15) {
-  // Verificar cache
+  // Verificar cache fresco
   const cacheKey = query.toLowerCase()
   const cached = twitterCache.get(cacheKey)
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    console.log(`      ✓ Usando cache (${Math.round((Date.now() - cached.timestamp) / 60000)}min)`)
     return cached.data
+  }
+
+  // Se estamos em rate limit, usar cache velho se disponível
+  if (isRateLimited && Date.now() < rateLimitResetTime) {
+    if (cached && Date.now() - cached.timestamp < STALE_CACHE_TTL) {
+      console.log(`      ⚠️ Rate limited, usando cache antigo`)
+      return cached.data
+    }
+    console.log(`      ⚠️ Rate limited, sem cache disponível`)
+    return []
   }
 
   // Rate limit: esperar entre chamadas
@@ -132,11 +192,19 @@ async function searchTwitter(query, limit = 15) {
 
     const result = await client.v2.search(query, {
       max_results: limit,
-      'tweet.fields': ['public_metrics', 'created_at', 'lang'],
+      'tweet.fields': ['public_metrics', 'created_at', 'lang', 'entities', 'author_id'],
+      'user.fields': ['username', 'name', 'public_metrics'],
+      'expansions': ['author_id'],
       sort_order: 'relevancy'
     })
 
     if (!result.data?.data) return []
+
+    // Criar mapa de usuarios para lookup rapido
+    const usersMap = new Map()
+    if (result.data?.includes?.users) {
+      result.data.includes.users.forEach(u => usersMap.set(u.id, u))
+    }
 
     const tweets = result.data.data
       .filter(t => t.lang === 'en' || t.lang === 'pt')
@@ -152,15 +220,28 @@ async function searchTwitter(query, limit = 15) {
         // Calcular velocidade viral (engagement/hora)
         const viralVelocity = age > 0 ? engagement / age : engagement
 
+        // Buscar info do autor
+        const author = usersMap.get(tweet.author_id)
+        const authorUsername = author?.username ? `@${author.username}` : null
+        const authorFollowers = author?.public_metrics?.followers_count || 0
+
+        // Extrair hashtags e mentions do tweet
+        const hashtags = tweet.entities?.hashtags?.map(h => `#${h.tag}`) || []
+        const mentions = tweet.entities?.mentions?.map(m => `@${m.username}`) || []
+
         return {
           text: tweet.text,
+          author: authorUsername,
+          authorFollowers,
           likes: metrics.like_count || 0,
           retweets: metrics.retweet_count || 0,
           replies: metrics.reply_count || 0,
           views: metrics.impression_count || 0,
           engagement,
           viralVelocity: viralVelocity.toFixed(1),
-          ageHours: age.toFixed(1)
+          ageHours: age.toFixed(1),
+          hashtags,
+          mentions
         }
       })
       .sort((a, b) => b.viralVelocity - a.viralVelocity)
@@ -170,12 +251,17 @@ async function searchTwitter(query, limit = 15) {
 
     return tweets
   } catch (err) {
-    // Se rate limit, retorna cache antigo se existir
+    // Se rate limit, marca e retorna cache antigo se existir
     if (err.code === 429 || err.message?.includes('429')) {
-      console.log(`      ⚠️ Rate limit para "${query}", usando cache ou pulando...`)
-      if (cached) return cached.data
+      isRateLimited = true
+      rateLimitResetTime = Date.now() + 15 * 60 * 1000 // Reset em 15 min
+      console.log(`      ⚠️ Rate limit para "${query.substring(0, 30)}...", reset em 15min`)
+      if (cached && Date.now() - cached.timestamp < STALE_CACHE_TTL) {
+        console.log(`      ✓ Usando cache antigo (${Math.round((Date.now() - cached.timestamp) / 60000)}min)`)
+        return cached.data
+      }
     } else {
-      console.error(`   Erro Twitter search "${query}":`, err.message)
+      console.error(`   Erro Twitter search:`, err.message?.substring(0, 50))
     }
     return []
   }
@@ -183,23 +269,50 @@ async function searchTwitter(query, limit = 15) {
 
 /**
  * Busca trending topics do X para um tópico
+ * Retorna tweets + metadados (autores, hashtags, mentions)
  */
 async function fetchXTrending(topic) {
   const queries = TWITTER_SEARCHES[topic] || []
   const allTweets = []
+  const hashtagCount = new Map()
+  const authorCount = new Map()
+  const mentionCount = new Map()
 
-  // Limita a 1-2 queries para evitar rate limit
-  for (const query of queries.slice(0, 2)) {
+  // Limita a 1 query por topico para evitar rate limit
+  // Usa a query mais especifica (primeira da lista)
+  const query = queries[0]
+  if (query) {
     console.log(`      Buscando: ${query}...`)
-    const tweets = await searchTwitter(query, 10)
+    const tweets = await searchTwitter(query, 15) // Busca mais tweets numa unica query
 
     if (tweets.length > 0) {
       allTweets.push(...tweets)
       console.log(`      ✓ ${tweets.length} tweets encontrados`)
+
+      // Contabilizar hashtags, autores e mentions
+      tweets.forEach(t => {
+        // Hashtags
+        t.hashtags?.forEach(h => {
+          hashtagCount.set(h, (hashtagCount.get(h) || 0) + 1)
+        })
+        // Autores com mais engajamento
+        if (t.author && t.authorFollowers > 500) { // Reduzido de 1000 para 500
+          const current = authorCount.get(t.author) || { count: 0, followers: 0, engagement: 0 }
+          authorCount.set(t.author, {
+            count: current.count + 1,
+            followers: Math.max(current.followers, t.authorFollowers),
+            engagement: current.engagement + t.engagement
+          })
+        }
+        // Mentions
+        t.mentions?.forEach(m => {
+          mentionCount.set(m, (mentionCount.get(m) || 0) + 1)
+        })
+      })
     }
 
-    // Delay maior para evitar rate limit
-    await new Promise(r => setTimeout(r, 3000))
+    // Delay maior entre topicos para evitar rate limit
+    await new Promise(r => setTimeout(r, 5000))
   }
 
   // Se não conseguiu nada do Twitter, não é crítico
@@ -213,7 +326,29 @@ async function fetchXTrending(topic) {
     return acc
   }, [])
 
-  return unique.sort((a, b) => parseFloat(b.viralVelocity) - parseFloat(a.viralVelocity)).slice(0, 10)
+  // Top hashtags, autores e mentions
+  const trendingHashtags = [...hashtagCount.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([tag, count]) => ({ tag, count }))
+
+  const topAuthors = [...authorCount.entries()]
+    .sort((a, b) => b[1].engagement - a[1].engagement)
+    .slice(0, 5)
+    .map(([author, data]) => ({ author, ...data }))
+
+  const topMentions = [...mentionCount.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([mention, count]) => ({ mention, count }))
+
+  return {
+    tweets: unique.sort((a, b) => parseFloat(b.viralVelocity) - parseFloat(a.viralVelocity)).slice(0, 10),
+    trendingHashtags,
+    topAuthors,
+    topMentions,
+    influencers: INFLUENCER_ACCOUNTS[topic] || []
+  }
 }
 
 // ==================== ANÁLISE COM CLAUDE ====================
@@ -290,20 +425,35 @@ export async function curateContentV2() {
 
   const curated = {}
 
+  // Tentar buscar trends globais (opcional)
+  console.log('\n   🌍 TRENDS GLOBAIS:')
+  console.log('      Buscando trending topics...')
+  const globalTrends = await fetchTwitterTrends()
+  if (globalTrends) {
+    console.log(`      ✓ ${globalTrends.length} trends encontrados`)
+    curated.globalTrends = globalTrends
+  } else {
+    console.log('      ℹ️ Usando busca por hashtags (trends API indisponível)')
+    curated.globalTrends = []
+  }
+
   // ========== CRYPTO ==========
   console.log('\n   🪙 CRYPTO:')
   console.log('      Buscando dados CoinGecko...')
   const cryptoData = await fetchCryptoData()
 
   console.log('      Buscando trending no X...')
-  const cryptoTweets = await fetchXTrending('crypto')
+  const cryptoX = await fetchXTrending('crypto')
 
   console.log('      Analisando sentimento...')
-  const cryptoAnalysis = await analyzeSentimentAndRelevance('crypto e Bitcoin', cryptoTweets, {
+  const cryptoAnalysis = await analyzeSentimentAndRelevance('crypto e Bitcoin', cryptoX.tweets, {
     btcPrice: cryptoData?.bitcoin?.price,
     btcChange: cryptoData?.bitcoin?.change24h + '%',
     fearGreed: cryptoData?.fearGreed?.label,
-    trending: cryptoData?.trending
+    trending: cryptoData?.trending,
+    trendingHashtags: cryptoX.trendingHashtags?.map(h => h.tag),
+    topAuthors: cryptoX.topAuthors?.map(a => a.author),
+    topMentions: cryptoX.topMentions?.map(m => m.mention)
   })
 
   curated.crypto = {
@@ -321,7 +471,11 @@ export async function curateContentV2() {
     keyData: cryptoAnalysis?.keyData || [],
     angles: cryptoAnalysis?.suggestedAngles || [],
     viralPotential: cryptoAnalysis?.viralPotential || [],
-    topTweets: cryptoTweets.slice(0, 3)
+    topTweets: cryptoX.tweets?.slice(0, 3) || [],
+    trendingHashtags: cryptoX.trendingHashtags || [],
+    topAuthors: cryptoX.topAuthors || [],
+    topMentions: cryptoX.topMentions || [],
+    influencers: cryptoX.influencers || []
   }
 
   // ========== INVESTING ==========
@@ -330,12 +484,15 @@ export async function curateContentV2() {
   const stockData = await fetchStockData()
 
   console.log('      Buscando trending no X...')
-  const investingTweets = await fetchXTrending('investing')
+  const investingX = await fetchXTrending('investing')
 
   console.log('      Analisando sentimento...')
-  const investingAnalysis = await analyzeSentimentAndRelevance('mercado de ações e NASDAQ', investingTweets, {
+  const investingAnalysis = await analyzeSentimentAndRelevance('mercado de ações e NASDAQ', investingX.tweets, {
     hotTopics: stockData?.hotTopics?.map(t => t.title),
-    tickers: stockData?.mentionedTickers
+    tickers: stockData?.mentionedTickers,
+    trendingHashtags: investingX.trendingHashtags?.map(h => h.tag),
+    topAuthors: investingX.topAuthors?.map(a => a.author),
+    topMentions: investingX.topMentions?.map(m => m.mention)
   })
 
   curated.investing = {
@@ -350,7 +507,11 @@ export async function curateContentV2() {
     keyData: investingAnalysis?.keyData || [],
     angles: investingAnalysis?.suggestedAngles || [],
     viralPotential: investingAnalysis?.viralPotential || [],
-    topTweets: investingTweets.slice(0, 3)
+    topTweets: investingX.tweets?.slice(0, 3) || [],
+    trendingHashtags: investingX.trendingHashtags || [],
+    topAuthors: investingX.topAuthors || [],
+    topMentions: investingX.topMentions || [],
+    influencers: investingX.influencers || []
   }
 
   // ========== VIBE CODING ==========
@@ -359,11 +520,14 @@ export async function curateContentV2() {
   const hnStories = await fetchHackerNews()
 
   console.log('      Buscando trending no X...')
-  const vibeTweets = await fetchXTrending('vibeCoding')
+  const vibeX = await fetchXTrending('vibeCoding')
 
   console.log('      Analisando sentimento...')
-  const vibeAnalysis = await analyzeSentimentAndRelevance('AI coding e vibe coding', vibeTweets, {
-    hackerNews: hnStories?.slice(0, 5).map(s => s.title)
+  const vibeAnalysis = await analyzeSentimentAndRelevance('AI coding e vibe coding', vibeX.tweets, {
+    hackerNews: hnStories?.slice(0, 5).map(s => s.title),
+    trendingHashtags: vibeX.trendingHashtags?.map(h => h.tag),
+    topAuthors: vibeX.topAuthors?.map(a => a.author),
+    topMentions: vibeX.topMentions?.map(m => m.mention)
   })
 
   curated.vibeCoding = {
@@ -377,7 +541,11 @@ export async function curateContentV2() {
     keyData: vibeAnalysis?.keyData || [],
     angles: vibeAnalysis?.suggestedAngles || [],
     viralPotential: vibeAnalysis?.viralPotential || [],
-    topTweets: vibeTweets.slice(0, 3)
+    topTweets: vibeX.tweets?.slice(0, 3) || [],
+    trendingHashtags: vibeX.trendingHashtags || [],
+    topAuthors: vibeX.topAuthors || [],
+    topMentions: vibeX.topMentions || [],
+    influencers: vibeX.influencers || []
   }
 
   console.log('\n✅ Curadoria v2 completa!')
@@ -436,10 +604,31 @@ export function formatForPrompt(curated, topic) {
     prompt += `DADOS-CHAVE: ${data.keyData.join(', ')}\n`
   }
 
+  // Hashtags trending
+  if (data.trendingHashtags?.length > 0) {
+    prompt += `\nHASHTAGS EM ALTA: ${data.trendingHashtags.map(h => h.tag).join(' ')}\n`
+  }
+
+  // Autores influentes
+  if (data.topAuthors?.length > 0) {
+    prompt += `CONTAS ATIVAS: ${data.topAuthors.map(a => a.author).join(', ')}\n`
+  }
+
+  // Mentions populares
+  if (data.topMentions?.length > 0) {
+    prompt += `MAIS MENCIONADOS: ${data.topMentions.map(m => m.mention).join(', ')}\n`
+  }
+
+  // Influencers do nicho (para referencia)
+  if (data.influencers?.length > 0) {
+    prompt += `INFLUENCERS DO NICHO: ${data.influencers.join(', ')}\n`
+  }
+
   if (data.topTweets?.length > 0) {
     prompt += `\nTWEETS VIRAIS NO MOMENTO:\n`
     data.topTweets.forEach((t, i) => {
-      prompt += `${i + 1}. [${t.viralVelocity}/h] "${t.text.substring(0, 150)}..."\n`
+      const authorInfo = t.author ? ` por ${t.author}` : ''
+      prompt += `${i + 1}. [${t.viralVelocity}/h${authorInfo}] "${t.text.substring(0, 150)}..."\n`
     })
   }
 
@@ -449,6 +638,11 @@ export function formatForPrompt(curated, topic) {
       prompt += `${i + 1}. [${a.type}] ${a.hook} → ${a.insight}\n`
     })
   }
+
+  prompt += `\nINSTRUÇÕES EXTRAS:\n`
+  prompt += `- Use 1-2 hashtags relevantes do trending\n`
+  prompt += `- Se fizer sentido, mencione ou referencie uma conta ativa\n`
+  prompt += `- Mantenha o tom autêntico e não pareça bot\n`
 
   return prompt
 }
