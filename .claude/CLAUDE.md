@@ -18,7 +18,7 @@ Bot automatizado para postar no X (Twitter) via Puppeteer conectado ao Chrome em
 Cron (8h, 12h, 14h, 18h) -> Curadoria v2 -> Claude (gera posts) -> Telegram Preview -> Puppeteer Post
 ```
 
-## Horarios e Topicos (Seg-Sex)
+## Horarios e Topicos (Seg-Sab)
 
 | Horario | Posts | Topicos |
 |---------|-------|---------|
@@ -27,7 +27,7 @@ Cron (8h, 12h, 14h, 18h) -> Curadoria v2 -> Claude (gera posts) -> Telegram Prev
 | 14h | 1 | vibeCoding |
 | 18h | 1 | vibeCoding |
 
-**Total:** 8 posts/dia (4 vibeCoding, 2 crypto, 2 investing)
+**Total:** 8 posts/dia x 6 dias = 48 posts/semana (4 vibeCoding, 2 crypto, 2 investing por dia)
 
 ## Arquivos Principais
 
@@ -197,6 +197,7 @@ curl -s http://localhost:9222/json/version
 - Retry automatico: 3 tentativas na conexao Chrome, 2 no post
 
 ## Historico de Commits
+- **2026-01-31 09:11** [`df9c934`] Document curadoria v2 with hashtags, authors, mentions in CLAUDE.md (.claude/CLAUDE.md)
 - **2026-01-31 09:07** [`99e6329`] Improve curate-v2: add authors, hashtags, mentions + optimize rate limits (scripts/test-curate-v2.js,src/curate-v2.js)
 - **2026-01-30 21:34** [`4afae02`] Update CLAUDE.md with commit history from hook (.claude/CLAUDE.md)
 - **2026-01-30 21:32** [`a5e3a5a`] Add post-commit hook to track changes in CLAUDE.md (.claude/CLAUDE.md,.claude/hooks/post-commit-summary.sh)

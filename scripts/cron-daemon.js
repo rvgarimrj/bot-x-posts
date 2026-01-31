@@ -12,33 +12,33 @@ const TIMEZONE = 'America/Sao_Paulo'
 const SCHEDULE = [
   {
     hour: 8,
-    cron: '0 8 * * 1-5',
-    desc: '8h (Seg-Sex)',
+    cron: '0 8 * * 1-6',
+    desc: '8h (Seg-Sab)',
     topics: ['crypto', 'investing', 'vibeCoding']  // 3 posts
   },
   {
     hour: 12,
-    cron: '0 12 * * 1-5',
-    desc: '12h (Seg-Sex)',
+    cron: '0 12 * * 1-6',
+    desc: '12h (Seg-Sab)',
     topics: ['crypto', 'investing', 'vibeCoding']  // 3 posts
   },
   {
     hour: 14,
-    cron: '0 14 * * 1-5',
-    desc: '14h (Seg-Sex)',
+    cron: '0 14 * * 1-6',
+    desc: '14h (Seg-Sab)',
     topics: ['vibeCoding']  // 1 post vibeCoding
   },
   {
     hour: 18,
-    cron: '0 18 * * 1-5',
-    desc: '18h (Seg-Sex)',
+    cron: '0 18 * * 1-6',
+    desc: '18h (Seg-Sab)',
     topics: ['vibeCoding']  // 1 post vibeCoding
   }
 ]
 
 console.log('🤖 Bot-X-Posts Daemon')
 console.log('='.repeat(50))
-console.log(`⏰ Horarios: 8h, 12h, 14h, 18h (Seg-Sex)`)
+console.log(`⏰ Horarios: 8h, 12h, 14h, 18h (Seg-Sab)`)
 console.log(`📊 Total: 8 posts/dia (4 vibeCoding, 2 crypto, 2 investing)`)
 console.log(`📅 Iniciado em: ${new Date().toLocaleString('pt-BR', { timeZone: TIMEZONE })}`)
 console.log('='.repeat(50))
