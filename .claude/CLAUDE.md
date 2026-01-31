@@ -72,12 +72,80 @@ Arquivo: `~/Library/LaunchAgents/com.botxposts.daemon.plist`
 
 ### Fontes de Dados
 - **CoinGecko:** Preco BTC/ETH, Fear & Greed Index, trending coins
-- **Twitter API:** Busca trending por hashtag (com cache 15min para rate limits)
+- **Twitter API:** Busca trending com extracao de autores, hashtags e mentions
 - **Hacker News:** Top stories para vibeCoding
-- **Claude:** Analise de sentimento e narrativas
+- **Claude:** Analise de sentimento, narrativas e angulos sugeridos
 
-### Rate Limits
-Twitter tem rate limit agressivo. Sistema usa cache e fallback graceful.
+### Dados Extraidos do X (TODOS os topicos)
+
+Para **crypto**, **investing** e **vibeCoding**, o sistema extrai:
+
+| Dado | Descricao | Uso |
+|------|-----------|-----|
+| `topTweets` | Tweets ordenados por velocidade viral | Contexto para Claude |
+| `trendingHashtags` | Hashtags mais usadas nos tweets | Incluir no post |
+| `topAuthors` | @usuarios + followers dos tweets virais | Referenciar no post |
+| `topMentions` | @contas mais mencionadas | Referenciar no post |
+| `influencers` | Lista pre-definida por nicho | Sugestao de mencao |
+
+### Queries de Busca por Topico
+
+```javascript
+crypto: 'Bitcoin OR #BTC OR #crypto -filter:retweets'
+investing: 'stocks OR #SP500 OR $NVDA OR $TSLA -filter:retweets'
+vibeCoding: 'Claude Code OR Cursor AI OR "vibe coding" OR "AI coding" -filter:retweets'
+```
+
+### Influencers Pre-definidos
+
+```javascript
+crypto: ['@sabortoothpete', '@CryptoCapo_', '@WClementeIII', '@documentingbtc', '@BitcoinMagazine']
+investing: ['@jimcramer', '@StockMKTNewz', '@unusual_whales', '@DeItaone', '@zaborowski']
+vibeCoding: ['@kaborowski', '@alexalbert__', '@cursor_ai', '@AnthropicAI', '@OpenAI']
+```
+
+### Prompt para Geracao de Posts
+
+O `formatForPrompt()` envia para Claude:
+```
+DADOS EM TEMPO REAL:
+- BTC: $83000 (-0.5%)
+- Fear & Greed: 20 (Extreme Fear)
+
+SENTIMENTO DO X: mixed (score: -15)
+NARRATIVA DOMINANTE: Bitcoin consolidando enquanto mercado em medo
+
+HASHTAGS EM ALTA: #Bitcoin #crypto #BTC
+CONTAS ATIVAS: @StckStratgy (8247), @cryptogallant (1750)
+MAIS MENCIONADOS: @Bitcoin, @elenakvcs
+INFLUENCERS DO NICHO: @CryptoCapo_, @BitcoinMagazine
+
+TWEETS VIRAIS NO MOMENTO:
+1. [45.2/h por @usuario] "texto do tweet..."
+
+INSTRUÇÕES EXTRAS:
+- Use 1-2 hashtags relevantes do trending
+- Se fizer sentido, mencione ou referencie uma conta ativa
+- Mantenha o tom autêntico e não pareça bot
+```
+
+### Rate Limits e Cache
+
+| Config | Valor | Motivo |
+|--------|-------|--------|
+| Cache fresco | 60 min | Evita requests repetidos |
+| Cache stale | 4 horas | Fallback quando rate limited |
+| Delay entre buscas | 5 segundos | Evita rate limit |
+| Queries por topico | 1 (com OR) | Menos requests |
+| Deteccao rate limit | Automatica | Para de tentar por 15min |
+
+### IMPORTANTE: O que os Cron Jobs DEVEM fazer
+
+1. **Curadoria v2** busca dados frescos + trending do X
+2. **Extrair** hashtags, autores e mentions dos tweets virais
+3. **Passar** esses dados para o Claude via `formatForPrompt()`
+4. **Claude gera** posts usando hashtags trending e referencias a contas
+5. **Posts incluem** 1-2 hashtags relevantes e podem mencionar contas ativas
 
 ## Comandos Uteis
 
@@ -129,6 +197,8 @@ curl -s http://localhost:9222/json/version
 - Retry automatico: 3 tentativas na conexao Chrome, 2 no post
 
 ## Historico de Commits
+- **2026-01-31 09:07** [`99e6329`] Improve curate-v2: add authors, hashtags, mentions + optimize rate limits (scripts/test-curate-v2.js,src/curate-v2.js)
+- **2026-01-30 21:34** [`4afae02`] Update CLAUDE.md with commit history from hook (.claude/CLAUDE.md)
 - **2026-01-30 21:32** [`a5e3a5a`] Add post-commit hook to track changes in CLAUDE.md (.claude/CLAUDE.md,.claude/hooks/post-commit-summary.sh)
 
 - **2026-01-30 19:56** [`f820a89`] Add curate-v2 with real-time data and fix daemon issues (src/curate-v2.js, scripts/auto-post.js, src/puppeteer-post.js, scripts/cron-daemon.js, .claude/CLAUDE.md)
