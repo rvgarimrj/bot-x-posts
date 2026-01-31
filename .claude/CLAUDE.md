@@ -129,6 +129,7 @@ curl -s http://localhost:9222/json/version
 - Retry automatico: 3 tentativas na conexao Chrome, 2 no post
 
 ## Historico de Commits
+- **2026-01-30 21:32** [`a5e3a5a`] Add post-commit hook to track changes in CLAUDE.md (.claude/CLAUDE.md,.claude/hooks/post-commit-summary.sh)
 
 - **2026-01-30 19:56** [`f820a89`] Add curate-v2 with real-time data and fix daemon issues (src/curate-v2.js, scripts/auto-post.js, src/puppeteer-post.js, scripts/cron-daemon.js, .claude/CLAUDE.md)
 - **2026-01-30 15:32** [`b8ce216`] Add anti-suspension measures for Chrome timeout issues
