@@ -127,3 +127,9 @@ curl -s http://localhost:9222/json/version
 - Digitacao humanizada: 70-130ms entre chars, pausas apos pontuacao
 - 60 segundos entre posts multiplos
 - Retry automatico: 3 tentativas na conexao Chrome, 2 no post
+
+## Historico de Commits
+
+- **2026-01-30 19:56** [`f820a89`] Add curate-v2 with real-time data and fix daemon issues (src/curate-v2.js, scripts/auto-post.js, src/puppeteer-post.js, scripts/cron-daemon.js, .claude/CLAUDE.md)
+- **2026-01-30 15:32** [`b8ce216`] Add anti-suspension measures for Chrome timeout issues
+- **2026-01-30 14:23** [`2325973`] Fix first post failure by navigating to /home before posting
