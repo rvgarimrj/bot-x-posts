@@ -10,35 +10,119 @@
 
 ## Visao Geral
 
-Bot automatizado para postar no X (Twitter) via Puppeteer conectado ao Chrome em modo debug. Gera posts sobre crypto, investing e vibeCoding usando curadoria de dados + Claude.
+Bot automatizado para postar no X (Twitter) via Puppeteer conectado ao Chrome em modo debug. Gera posts bilingues (EN + PT-BR) sobre crypto, investing, AI e vibeCoding usando curadoria multi-fonte + Claude.
 
-## Arquitetura
+## Arquitetura V2 (Multi-Source Bilingual)
 
 ```
-Cron (8h, 12h, 14h, 18h) -> Curadoria v2 -> Claude (gera posts) -> Telegram Preview -> Puppeteer Post
+Cron (8h,10h,12h,14h,16h,18h,20h - Daily)
+    │
+    ▼
+┌─────────────────────────────────────────────────┐
+│              CURATE-V3 (Orquestrador)           │
+│                                                 │
+│  Para cada topico, busca em paralelo:          │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐           │
+│  │ Fonte 1 │ │ Fonte 2 │ │ Fonte 3 │           │
+│  └────┬────┘ └────┬────┘ └────┬────┘           │
+│       └───────────┼───────────┘                 │
+│                   ▼                             │
+│            Cache Manager                        │
+│       (fresh 30min, stale 4h)                  │
+└─────────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────────┐
+│           CLAUDE-V2 (Analise + Geracao)         │
+│                                                 │
+│  • Analisa sentiment/narrativa                  │
+│  • Gera 2 posts por topico (EN + PT-BR)        │
+│  • System prompts diferentes por idioma        │
+└─────────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────────┐
+│            TELEGRAM PREVIEW (2 min)             │
+│         8 posts com botao de cancelar          │
+└─────────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────────┐
+│         PUPPETEER POST (60s entre posts)        │
+│      Digitacao humanizada, Chrome debug        │
+└─────────────────────────────────────────────────┘
 ```
 
-## Horarios e Topicos (Seg-Sab)
+## Horarios e Topicos (TODOS OS DIAS)
 
-| Horario | Posts | Topicos |
-|---------|-------|---------|
-| 8h | 3 | crypto, investing, vibeCoding |
-| 12h | 3 | crypto, investing, vibeCoding |
-| 14h | 1 | vibeCoding |
-| 18h | 1 | vibeCoding |
+| Horario | Posts | Topicos | Idiomas |
+|---------|-------|---------|---------|
+| 8h | 8 | crypto, investing, ai, vibeCoding | EN + PT-BR |
+| 10h | 8 | crypto, investing, ai, vibeCoding | EN + PT-BR |
+| 12h | 8 | crypto, investing, ai, vibeCoding | EN + PT-BR |
+| 14h | 8 | crypto, investing, ai, vibeCoding | EN + PT-BR |
+| 16h | 8 | crypto, investing, ai, vibeCoding | EN + PT-BR |
+| 18h | 8 | crypto, investing, ai, vibeCoding | EN + PT-BR |
+| 20h | 8 | crypto, investing, ai, vibeCoding | EN + PT-BR |
 
-**Total:** 8 posts/dia x 6 dias = 48 posts/semana (4 vibeCoding, 2 crypto, 2 investing por dia)
+**Total:** 56 posts/dia x 7 dias = 392 posts/semana
 
 ## Arquivos Principais
 
+### V2 (Novo - Multi-Source Bilingual)
 | Arquivo | Funcao |
 |---------|--------|
-| `scripts/cron-daemon.js` | Daemon principal com agendamento |
-| `scripts/auto-post.js` | Fluxo completo: curadoria -> gerar -> preview -> postar |
-| `src/curate-v2.js` | Curadoria com dados frescos (CoinGecko, Twitter, HN) |
+| `scripts/cron-daemon-v2.js` | Daemon V2: 7 horarios, todos os dias |
+| `scripts/auto-post-v2.js` | Fluxo V2: 8 posts (4 topicos x 2 idiomas) |
+| `src/curate-v3.js` | Curadoria multi-fonte com fallback chains |
+| `src/claude-v2.js` | Geracao bilingue (EN + PT-BR) |
+| `src/sources/` | Modulos de fontes de dados |
+
+### V1 (Legacy)
+| Arquivo | Funcao |
+|---------|--------|
+| `scripts/cron-daemon.js` | Daemon V1: 4 horarios, Seg-Sab |
+| `scripts/auto-post.js` | Fluxo V1: 3 posts por horario |
+| `src/curate-v2.js` | Curadoria com Twitter API |
+| `src/claude.js` | Geracao PT-BR apenas |
+
+### Comum
+| Arquivo | Funcao |
+|---------|--------|
 | `src/puppeteer-post.js` | Posta no X via Chrome debug |
-| `src/claude.js` | Gera posts com Claude |
 | `src/telegram-v2.js` | Notificacoes Telegram |
+
+## Fontes de Dados por Topico (V2)
+
+### CRYPTO
+| Prioridade | Fonte | Rate Limit | Dados |
+|------------|-------|------------|-------|
+| Primary | CoinGecko | 30/min | BTC/ETH precos, Fear&Greed, trending |
+| Primary | Reddit r/cryptocurrency | 60/min | Hot posts, sentiment |
+| Fallback | RSS (CoinTelegraph, CryptoNews) | Ilimitado | Noticias |
+
+### INVESTING
+| Prioridade | Fonte | Rate Limit | Dados |
+|------------|-------|------------|-------|
+| Primary | Finnhub | 60/min | Noticias, earnings |
+| Primary | Reddit r/stocks, r/wallstreetbets | 60/min | Hot posts, tickers |
+| Fallback | RSS (MarketWatch) | Ilimitado | Noticias |
+
+### AI
+| Prioridade | Fonte | Rate Limit | Dados |
+|------------|-------|------------|-------|
+| Primary | HuggingFace Hub | Ilimitado | Modelos trending |
+| Primary | Reddit r/MachineLearning, r/ChatGPT | 60/min | Discussoes |
+| Secondary | arXiv API | 3/sec | Papers recentes |
+| Fallback | RSS (TechCrunch AI) | Ilimitado | Noticias |
+
+### VIBECODING
+| Prioridade | Fonte | Rate Limit | Dados |
+|------------|-------|------------|-------|
+| Primary | HackerNews | Ilimitado | Top stories |
+| Primary | GitHub API | 60/hora | Repos trending |
+| Secondary | Reddit r/Cursor, r/LocalLLaMA | 60/min | Discussoes |
+| Fallback | RSS (Dev.to) | Ilimitado | Artigos |
 
 ## Configuracoes Criticas
 
@@ -150,20 +234,48 @@ INSTRUÇÕES EXTRAS:
 ## Comandos Uteis
 
 ```bash
-# Status do daemon
+# ===== V2 (Recomendado) =====
+
+# Iniciar daemon V2
+npm run start:v2
+
+# Testar uma source individual
+node scripts/test-source.js coingecko
+node scripts/test-source.js reddit investing
+node scripts/test-source.js finnhub
+node scripts/test-source.js hackernews
+node scripts/test-source.js github
+node scripts/test-source.js huggingface
+
+# Testar curadoria V3
+node scripts/test-curate-v3.js              # Todos os topicos
+node scripts/test-curate-v3.js crypto       # Topico especifico
+
+# Testar geracao bilingue
+node scripts/test-generate-v2.js            # Todos
+node scripts/test-generate-v2.js crypto en  # Especifico
+
+# Rodar ciclo completo (dry-run)
+node scripts/auto-post-v2.js
+
+# ===== V1 (Legacy) =====
+
+# Status do daemon V1
 launchctl list | grep bot
 
 # Ver logs
 tail -f logs/daemon.log
 tail -f logs/daemon-error.log
 
-# Reiniciar daemon
+# Reiniciar daemon V1
 pkill -9 -f "cron-daemon"
 launchctl unload ~/Library/LaunchAgents/com.botxposts.daemon.plist
 launchctl load ~/Library/LaunchAgents/com.botxposts.daemon.plist
 
-# Testar post manual
+# Testar post manual V1
 node scripts/auto-post.js vibeCoding
+
+# ===== Comum =====
 
 # Verificar Chrome conectado
 curl -s http://localhost:9222/json/version
@@ -179,15 +291,33 @@ curl -s http://localhost:9222/json/version
 | Aba X nao encontrada | Chrome sem X.com aberto | Codigo abre automaticamente |
 | Timeout com tela bloqueada | App Nap / throttling | Flags anti-suspensao no Chrome |
 | Twitter rate limit | Muitas requisicoes | Cache de 15 min, fallback |
+| Post truncado (so ultimo paragrafo) | execCommand em chunks sobrescreve | Usar clipboard (Cmd+V) |
+| Daemon crash silencioso | `.catch()` em funcao sync | Usar try/catch para unlinkSync |
 
-## Fluxo de Postagem
+## Fluxo de Postagem (V2)
 
-1. Cron dispara no horario
-2. `curateContentV2()` busca dados frescos
-3. `generatePost()` gera texto com Claude
-4. Preview enviado no Telegram (2 min para cancelar)
-5. `postTweet()` digita no X como humano (delays variaveis)
-6. Confirmacao no Telegram
+1. Cron dispara a cada 2h (8h-20h, todos os dias)
+2. `curateContentV3()` busca de multiplas fontes em paralelo
+3. Fallback chain: Primary -> Secondary -> RSS
+4. `generatePost()` gera 8 posts (4 topicos x 2 idiomas)
+5. Preview enviado no Telegram (2 min para cancelar)
+6. `postTweet()` digita no X como humano (delays variaveis)
+7. 60s entre cada post (total ~12 min por slot)
+8. Confirmacao no Telegram
+
+## Diferenciacao EN vs PT-BR
+
+### Posts em Ingles
+- System prompt: Global developer perspective
+- Hashtags: #AI #VibeCoding #ClaudeCode #Cursor
+- Tom: Tecnico, direto, internacional
+
+### Posts em Portugues
+- System prompt: @garim (prompt original)
+- Hashtags: #DevBR #ClaudeCode #Cursor #VibeCoding
+- Tom: Pratico, conversacional, brasileiro
+
+**IMPORTANTE:** Ambos na mesma conta @garim, intercalados. NAO sao traducoes - Claude gera independentemente.
 
 ## Notas de Desenvolvimento
 
@@ -195,8 +325,45 @@ curl -s http://localhost:9222/json/version
 - Digitacao humanizada: 70-130ms entre chars, pausas apos pontuacao
 - 60 segundos entre posts multiplos
 - Retry automatico: 3 tentativas na conexao Chrome, 2 no post
+- Cache: 30 min fresco, 4h stale para fallback
+
+## Premissas e Licoes Aprendidas
+
+### Insercao de Texto no X (IMPORTANTE)
+| Metodo | Funciona? | Problema |
+|--------|-----------|----------|
+| `execCommand('insertText')` em chunks | NAO | Cada chunk sobrescreve o anterior |
+| `keyboard.type()` char por char | SIM (lento) | ~100ms por char, OK para fallback |
+| **Clipboard (Cmd+V)** | **SIM** | **Metodo principal - mais confiavel** |
+
+**SEMPRE usar clipboard para textos longos.** A insercao via DOM em chunks perde texto.
+
+### Funcoes Sync vs Async (Node.js)
+| Funcao | Tipo | Tem .catch()? |
+|--------|------|---------------|
+| `fs.unlinkSync()` | Sync | NAO - usar try/catch |
+| `fs.unlink()` | Async (callback) | NAO - usar promisify |
+| `fs.promises.unlink()` | Async (Promise) | SIM |
+
+**NUNCA usar `.catch()` em funcoes sync.** Causa crash silencioso.
+
+### Daemon e Hot Reload
+- Daemon usa `spawn()` para executar scripts
+- Codigo e carregado do disco A CADA execucao
+- **NAO precisa reiniciar daemon** apos editar `auto-post.js` ou `puppeteer-post.js`
+- So reiniciar se editar `cron-daemon.js` (o proprio daemon)
+
+### Verificacao de Posts
+Sempre logar no puppeteer-post.js:
+1. Quantos chars foram inseridos vs esperado
+2. Primeiros 100 chars do texto final (para debug)
+3. Se texto < 80% do esperado, avisar antes de postar
 
 ## Historico de Commits
+- **2026-02-02 19:07** [`3f7b9c5`] Fix text truncation: use clipboard instead of chunked DOM insert (src/puppeteer-post.js)
+- **2026-02-02 16:33** [`bc9f5ba`] Fix daemon crash: unlinkSync is sync, not async (scripts/cron-daemon.js)
+- **2026-02-02 09:55** [`9f07b6a`] Add multi-source bilingual posting system (v2) (.gitignore,scripts/auto-post-v2.js,scripts/cron-daemon-v2.js,scripts/test-curate-v3.js,scripts/test-generate-v2.js)
+- **2026-01-31 14:24** [`68b36b1`] Update CLAUDE.md commit history (.claude/CLAUDE.md)
 - **2026-01-31 13:19** [`595d0e1`] Add singleton check to prevent duplicate daemon instances (scripts/cron-daemon.js)
 - **2026-01-31 11:07** [`c2e5217`] Change schedule from Mon-Fri to Mon-Sat (1-6) (.claude/CLAUDE.md,scripts/cron-daemon.js)
 - **2026-01-31 09:11** [`df9c934`] Document curadoria v2 with hashtags, authors, mentions in CLAUDE.md (.claude/CLAUDE.md)
