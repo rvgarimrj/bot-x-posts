@@ -275,28 +275,59 @@ export async function postTweet(text, keepBrowserOpen = true) {
     await page.keyboard.press('Backspace')
     await new Promise(r => setTimeout(r, 500))
 
-    // Digita caractere por caractere com delay variavel (parece humano)
-    console.log('   Digitando texto (humanizado)...')
-    let charCount = 0
-    for (const char of text) {
-      await page.keyboard.type(char)
-      charCount++
+    // ========== INSERÇÃO HUMANIZADA VIA DOM ==========
+    // Divide em chunks para parecer mais natural (como se colasse de um lugar)
 
-      // Delay base: 70-130ms
-      let delay = Math.random() * 60 + 70
+    // Delay antes de "colar" (1-2s) - simula preparar texto
+    console.log('   Preparando texto...')
+    await new Promise(r => setTimeout(r, Math.random() * 1000 + 1000))
 
-      // Pausa maior apos pontuacao (200-500ms)
-      if (['.', ',', '!', '?', ';', ':'].includes(char)) {
-        delay = Math.random() * 300 + 200
+    // Para textos longos, divide em chunks
+    const CHUNK_SIZE = 80
+    const chunks = []
+    for (let i = 0; i < text.length; i += CHUNK_SIZE) {
+      chunks.push(text.slice(i, i + CHUNK_SIZE))
+    }
+
+    console.log(`   Inserindo em ${chunks.length} parte(s)...`)
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i]
+
+      // Insere via execCommand (mais confiável que clipboard)
+      await page.evaluate((txt) => {
+        const el = document.querySelector('[data-testid="tweetTextarea_0"]')
+        if (el) {
+          el.focus()
+          document.execCommand('insertText', false, txt)
+        }
+      }, chunk)
+
+      // Delay entre chunks (0.3-0.8s) - simula colando em partes
+      if (i < chunks.length - 1) {
+        await new Promise(r => setTimeout(r, Math.random() * 500 + 300))
       }
+    }
 
-      // Pausa aleatoria "pensando" a cada ~30 chars (1-2 segundos)
-      if (charCount % 30 === 0 && Math.random() > 0.5) {
-        delay += Math.random() * 1000 + 1000
-        console.log('   ... pensando ...')
-      }
+    // Delay depois de inserir (0.5-1s)
+    await new Promise(r => setTimeout(r, Math.random() * 500 + 500))
 
-      await new Promise(r => setTimeout(r, delay))
+    // Verifica se o texto foi inserido corretamente
+    const insertedText = await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="tweetTextarea_0"]')
+      return el ? el.textContent : ''
+    })
+
+    if (insertedText.length < text.length * 0.7) {
+      // Fallback: tenta via clipboard
+      console.log('   ⚠️ DOM falhou, tentando clipboard...')
+      await page.evaluate(async (textToInsert) => {
+        await navigator.clipboard.writeText(textToInsert)
+      }, text)
+      await page.keyboard.down('Meta')
+      await page.keyboard.press('v')
+      await page.keyboard.up('Meta')
+      await new Promise(r => setTimeout(r, 1000))
     }
 
     // Espera antes de postar (como se estivesse relendo) - 2-4 segundos
