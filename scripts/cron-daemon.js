@@ -31,7 +31,7 @@ function checkSingleton() {
     fs.writeFileSync(PIDFILE, process.pid.toString())
 
     // Cleanup ao sair
-    process.on('exit', () => fs.unlinkSync(PIDFILE).catch?.(() => {}))
+    process.on('exit', () => { try { fs.unlinkSync(PIDFILE) } catch {} })
     process.on('SIGINT', () => process.exit(0))
     process.on('SIGTERM', () => process.exit(0))
   } catch (err) {
