@@ -275,42 +275,30 @@ export async function postTweet(text, keepBrowserOpen = true) {
     await page.keyboard.press('Backspace')
     await new Promise(r => setTimeout(r, 500))
 
-    // ========== INSERÇÃO HUMANIZADA VIA DOM ==========
-    // Divide em chunks para parecer mais natural (como se colasse de um lugar)
+    // ========== INSERÇÃO VIA CLIPBOARD (mais confiável) ==========
+    // Clipboard é a forma mais confiável de inserir texto longo no X
 
     // Delay antes de "colar" (1-2s) - simula preparar texto
     console.log('   Preparando texto...')
     await new Promise(r => setTimeout(r, Math.random() * 1000 + 1000))
 
-    // Para textos longos, divide em chunks
-    const CHUNK_SIZE = 80
-    const chunks = []
-    for (let i = 0; i < text.length; i += CHUNK_SIZE) {
-      chunks.push(text.slice(i, i + CHUNK_SIZE))
-    }
+    // Insere via clipboard (mais confiável para textos longos)
+    console.log('   Digitando texto (humanizado)...')
 
-    console.log(`   Inserindo em ${chunks.length} parte(s)...`)
+    // Copia texto para clipboard e cola
+    await page.evaluate(async (textToInsert) => {
+      await navigator.clipboard.writeText(textToInsert)
+    }, text)
 
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i]
+    await new Promise(r => setTimeout(r, 300))
 
-      // Insere via execCommand (mais confiável que clipboard)
-      await page.evaluate((txt) => {
-        const el = document.querySelector('[data-testid="tweetTextarea_0"]')
-        if (el) {
-          el.focus()
-          document.execCommand('insertText', false, txt)
-        }
-      }, chunk)
+    // Cola (Cmd+V no Mac)
+    await page.keyboard.down('Meta')
+    await page.keyboard.press('v')
+    await page.keyboard.up('Meta')
 
-      // Delay entre chunks (0.3-0.8s) - simula colando em partes
-      if (i < chunks.length - 1) {
-        await new Promise(r => setTimeout(r, Math.random() * 500 + 300))
-      }
-    }
-
-    // Delay depois de inserir (0.5-1s)
-    await new Promise(r => setTimeout(r, Math.random() * 500 + 500))
+    // Delay depois de colar (1-2s) - espera UI processar
+    await new Promise(r => setTimeout(r, Math.random() * 1000 + 1000))
 
     // Verifica se o texto foi inserido corretamente
     const insertedText = await page.evaluate(() => {
@@ -318,21 +306,37 @@ export async function postTweet(text, keepBrowserOpen = true) {
       return el ? el.textContent : ''
     })
 
-    if (insertedText.length < text.length * 0.7) {
-      // Fallback: tenta via clipboard
-      console.log('   ⚠️ DOM falhou, tentando clipboard...')
-      await page.evaluate(async (textToInsert) => {
-        await navigator.clipboard.writeText(textToInsert)
-      }, text)
+    console.log(`   Texto inserido: ${insertedText.length}/${text.length} chars`)
+
+    if (insertedText.length < text.length * 0.5) {
+      // Fallback: tenta via keyboard.type (lento mas confiável)
+      console.log('   ⚠️ Clipboard falhou, tentando digitacao...')
+
+      // Limpa o que foi inserido
       await page.keyboard.down('Meta')
-      await page.keyboard.press('v')
+      await page.keyboard.press('a')
       await page.keyboard.up('Meta')
-      await new Promise(r => setTimeout(r, 1000))
+      await page.keyboard.press('Backspace')
+      await new Promise(r => setTimeout(r, 500))
+
+      // Digita caractere por caractere (mais lento, mas funciona)
+      await typeHuman(page, text)
     }
 
     // Espera antes de postar (como se estivesse relendo) - 2-4 segundos
     console.log('   Relendo antes de postar...')
     await new Promise(r => setTimeout(r, Math.random() * 2000 + 2000))
+
+    // Verificação final do texto
+    const finalText = await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="tweetTextarea_0"]')
+      return el ? el.textContent : ''
+    })
+
+    if (finalText.length < text.length * 0.8) {
+      console.log(`   ⚠️ AVISO: Texto final (${finalText.length} chars) menor que esperado (${text.length} chars)`)
+      console.log(`   Primeiros 100 chars: "${finalText.slice(0, 100)}..."`)
+    }
 
     console.log('   ✅ Texto inserido')
 
