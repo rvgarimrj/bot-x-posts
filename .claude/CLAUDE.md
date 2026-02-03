@@ -394,6 +394,46 @@ console.log(`      [style: ${randomStyle.name} + hook: ${randomHook.name}]`)
 // HOOK EXAMPLES: ${randomHook.examples.join(' | ')}
 ```
 
+## Sistema de Auto-Aprendizado (Self-Learning)
+
+O bot aprende automaticamente quais combinacoes de HOOK + STYLE geram mais engajamento.
+
+### Arquivos do Sistema
+| Arquivo | Funcao |
+|---------|--------|
+| `src/analytics-monitor.js` | Coleta metricas diarias do X Analytics |
+| `src/learning-engine.js` | Analisa performance, ajusta pesos |
+| `scripts/daily-analysis.js` | Roda as 23:59, gera relatorios |
+| `data/learnings.json` | Scores e pesos por hook/style/topico |
+| `logs/daily-reports/` | Relatorios diarios em JSON |
+
+### Fluxo de Aprendizado
+```
+Dia 1: Posts com selecao aleatoria
+         ↓
+23:59: Analise coleta engajamento
+         ↓
+       Learning engine identifica:
+       - "extreme + hot_take" → alto engajamento → peso 1.4
+       - "tip + idea" → baixo engajamento → peso 0.7
+         ↓
+Dia 2: Posts com pesos ajustados (mais do que funciona)
+```
+
+### Metas Monitoradas
+| Meta | Valor | Para que |
+|------|-------|----------|
+| Impressoes | 5M em 3 meses | Partilha de Receitas |
+| Premium Followers | 500 | Partilha de Receitas |
+| Verified Followers | 2,000 | Subscricoes |
+
+### Comandos
+```bash
+npm run analyze          # Rodar analise manual
+npm run learn            # Ciclo completo de aprendizado
+cat data/learnings.json  # Ver pesos atuais
+```
+
 ## Notas de Desenvolvimento
 
 - Posts max 500 chars
@@ -435,6 +475,7 @@ Sempre logar no puppeteer-post.js:
 3. Se texto < 80% do esperado, avisar antes de postar
 
 ## Historico de Commits
+- **2026-02-03 20:09** [`1ec2efe`] Add Hook Frameworks + Self-Learning Analytics System (.claude/CLAUDE.md,package.json,scripts/auto-post-v2.js,scripts/cron-daemon-v2.js,scripts/daily-analysis.js)
 - **2026-02-03** Document Hook Frameworks: 8 styles x 8 hooks = 64 combinations (.claude/CLAUDE.md)
 - **2026-02-02 19:13** [`5b070e7`] Document lessons learned: clipboard for text, sync vs async, hot reload (.claude/CLAUDE.md)
 - **2026-02-02 19:07** [`3f7b9c5`] Fix text truncation: use clipboard instead of chunked DOM insert (src/puppeteer-post.js)
