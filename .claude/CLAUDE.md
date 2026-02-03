@@ -38,6 +38,7 @@ Cron (8h,10h,12h,14h,16h,18h,20h - Daily)
 │  • Analisa sentiment/narrativa                  │
 │  • Gera 2 posts por topico (EN + PT-BR)        │
 │  • System prompts diferentes por idioma        │
+│  • 8 estilos x 8 hooks = 64 combinacoes        │
 └─────────────────────────────────────────────────┘
     │
     ▼
@@ -75,7 +76,7 @@ Cron (8h,10h,12h,14h,16h,18h,20h - Daily)
 | `scripts/cron-daemon-v2.js` | Daemon V2: 7 horarios, todos os dias |
 | `scripts/auto-post-v2.js` | Fluxo V2: 8 posts (4 topicos x 2 idiomas) |
 | `src/curate-v3.js` | Curadoria multi-fonte com fallback chains |
-| `src/claude-v2.js` | Geracao bilingue (EN + PT-BR) |
+| `src/claude-v2.js` | Geracao bilingue (EN + PT-BR) + Hook Frameworks |
 | `src/sources/` | Modulos de fontes de dados |
 
 ### V1 (Legacy)
@@ -319,6 +320,80 @@ curl -s http://localhost:9222/json/version
 
 **IMPORTANTE:** Ambos na mesma conta @garim, intercalados. NAO sao traducoes - Claude gera independentemente.
 
+## Sistema de Variedade: Styles + Hook Frameworks
+
+O `claude-v2.js` implementa um sistema de variedade para evitar posts repetitivos. Cada post e gerado com uma combinacao aleatoria de **STYLE** (tom) e **HOOK** (estrutura de abertura).
+
+### POST_STYLES (8 estilos de tom)
+
+| Style | EN | PT-BR |
+|-------|----|----|
+| `hot_take` | Strong opinion, controversial | Opiniao forte, controversa |
+| `observation` | Casual "just realized..." | "acabei de perceber..." |
+| `question` | Genuine question to followers | Pergunta genuina |
+| `reaction` | Emotional reaction (surprise, frustration) | Reacao emocional |
+| `tip` | Quick useful tip, not preachy | Dica rapida, sem parecer coach |
+| `sarcasm` | Light ironic humor | Humor ironico leve |
+| `personal` | What YOU are doing/thinking | O que VOCE ta fazendo |
+| `contrarian` | Go against the crowd | Vai contra a manada |
+
+### HOOK_FRAMEWORKS (8 estruturas de abertura)
+
+| Hook | Descricao | Exemplo EN | Exemplo PT-BR |
+|------|-----------|------------|---------------|
+| `extreme` | Extremos: best/worst/most ever | "worst crash ive seen this year" | "pior crash que vi esse ano" |
+| `aida` | Attention-Interest-Desire-Action | "most devs waste hours on X. i did too. then i found Y" | "maioria dos devs perde horas com X. eu tambem perdia" |
+| `pas` | Problem-Agitate-Solution | "context switching kills your flow. been there. this fixed it" | "trocar de contexto mata seu flow. ja passei por isso" |
+| `bab` | Before-After-Bridge (transformacao) | "used to spend 3h debugging. now 20min. the trick?" | "gastava 3h debugando. agora 20min. o truque?" |
+| `emotional` | Lead with raw emotion | "almost rage-quit yesterday. then realized..." | "quase larguei tudo ontem. dai percebi..." |
+| `results` | Lead with results achieved | "shipped 3 features today instead of 1. heres my setup" | "entreguei 3 features hoje ao inves de 1. meu setup" |
+| `client` | Third-party proof (friend/colleague) | "friend asked me to review his code. found this gem" | "amigo pediu pra revisar codigo dele. achei essa perola" |
+| `idea` | One powerful standalone line | "AI wont replace devs. devs using AI will replace devs not using it" | "AI nao vai substituir dev. dev usando AI vai substituir dev sem AI" |
+
+### Combinacao STYLE + HOOK = 64 variacoes
+
+O sistema combina **8 styles x 8 hooks = 64 combinacoes possiveis** para cada idioma.
+
+Exemplos de combinacoes:
+- `hot_take + extreme` = "hot take: worst AI tool ive ever used is..."
+- `sarcasm + bab` = "used to be productive. then discovered twitter. now..."
+- `personal + results` = "just shipped 3 PRs today. my secret? turn off slack"
+- `contrarian + emotional` = "everyone hyped about X and im here worried..."
+
+### Log Output
+
+Durante a geracao, o sistema loga a combinacao escolhida:
+
+```
+   Gerando: crypto (en)...
+      [style: hot_take + hook: extreme]
+   Gerando: crypto (pt-BR)...
+      [style: reaction + hook: pas]
+   Gerando: investing (en)...
+      [style: contrarian + hook: bab]
+```
+
+### Por que isso importa
+
+1. **Evita deteccao de bot** - Posts variam em estrutura e tom
+2. **Parece mais humano** - Pessoas reais alternam entre estilos
+3. **Melhora engajamento** - Diferentes hooks funcionam para diferentes momentos
+4. **Escalabilidade** - 64 combinacoes x 4 topicos x 2 idiomas = alta variedade
+
+### Implementacao tecnica
+
+```javascript
+// Em generatePost()
+const randomStyle = styles[Math.floor(Math.random() * styles.length)]
+const randomHook = hooks[Math.floor(Math.random() * hooks.length)]
+console.log(`      [style: ${randomStyle.name} + hook: ${randomHook.name}]`)
+
+// Prompt inclui ambos:
+// TONE/STYLE: ${randomStyle.instruction}
+// HOOK FRAMEWORK: ${randomHook.instruction}
+// HOOK EXAMPLES: ${randomHook.examples.join(' | ')}
+```
+
 ## Notas de Desenvolvimento
 
 - Posts max 500 chars
@@ -360,6 +435,8 @@ Sempre logar no puppeteer-post.js:
 3. Se texto < 80% do esperado, avisar antes de postar
 
 ## Historico de Commits
+- **2026-02-03** Document Hook Frameworks: 8 styles x 8 hooks = 64 combinations (.claude/CLAUDE.md)
+- **2026-02-02 19:13** [`5b070e7`] Document lessons learned: clipboard for text, sync vs async, hot reload (.claude/CLAUDE.md)
 - **2026-02-02 19:07** [`3f7b9c5`] Fix text truncation: use clipboard instead of chunked DOM insert (src/puppeteer-post.js)
 - **2026-02-02 16:33** [`bc9f5ba`] Fix daemon crash: unlinkSync is sync, not async (scripts/cron-daemon.js)
 - **2026-02-02 09:55** [`9f07b6a`] Add multi-source bilingual posting system (v2) (.gitignore,scripts/auto-post-v2.js,scripts/cron-daemon-v2.js,scripts/test-curate-v3.js,scripts/test-generate-v2.js)

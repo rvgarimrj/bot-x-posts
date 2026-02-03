@@ -3,11 +3,21 @@
  *
  * Generates posts in English and Portuguese (BR)
  * Different system prompts for each language
+ *
+ * Now integrates with Learning Engine for weighted selection
  */
 
 import Anthropic from '@anthropic-ai/sdk'
 
 const anthropic = new Anthropic()
+
+// Learning engine import (optional - graceful fallback if not available)
+let learningEngine = null
+try {
+  learningEngine = await import('./learning-engine.js')
+} catch (err) {
+  console.log('   Learning engine not available, using random selection')
+}
 
 // ==================== SYSTEM PROMPTS ====================
 
@@ -22,7 +32,7 @@ const SYSTEM_PROMPT_PT_BR = `Voce e o @garim - dev brasileiro real no X. Escreve
 - Emocao real: frustracao, surpresa, animacao
 
 === PALAVRAS PROIBIDAS (detectam IA) ===
-NUNCA use: "Interestingly", "Notably", "Importantly", "Furthermore", "Moreover", "Indeed", "Essentially", "Fundamentally", "Arguably", "Undoubtedly", "Certainly", "Definitely", "Absolutely", "Extremely", "Highly", "Incredibly", "Remarkable", "Outstanding", "Exceptional", "Comprehensive", "Robust", "Leverage", "Utilize", "Implement", "Facilitate", "Enhance", "Optimize", "Streamline", "Revolutionary", "Game-changer", "Cutting-edge", "State-of-the-art", "Best practices", "Synergy", "Paradigm", "Fun fact:", "É importante notar", "Vale ressaltar", "Interessantemente", "masterpiece", "countless"
+NUNCA use: "Interestingly", "Notably", "Importantly", "Furthermore", "Moreover", "Indeed", "Essentially", "Fundamentally", "Arguably", "Undoubtedly", "Certainly", "Definitely", "Absolutely", "Extremely", "Highly", "Incredibly", "Remarkable", "Outstanding", "Exceptional", "Comprehensive", "Robust", "Leverage", "Utilize", "Implement", "Facilitate", "Enhance", "Optimize", "Streamline", "Revolutionary", "Game-changer", "Cutting-edge", "State-of-the-art", "Best practices", "Synergy", "Paradigm", "Fun fact:", "E importante notar", "Vale ressaltar", "Interessantemente", "masterpiece", "countless"
 
 === EXEMPLOS HUMANOS REAIS ===
 
@@ -36,7 +46,7 @@ BOM: "hot take: copilot ainda ganha do cursor pra autocomplete puro. la eu disse
 
 RUIM (parece IA): "Here's an interesting insight: After extensively using AI coding tools for 6 months, I've discovered that the real productivity gain isn't speed..."
 
-RUIM (parece IA): "Fun fact: O Bitcoin historicamente apresenta recuperação após períodos de extreme fear no índice..."
+RUIM (parece IA): "Fun fact: O Bitcoin historicamente apresenta recuperacao apos periodos de extreme fear no indice..."
 
 === REGRAS ===
 - MAX 1-2 dados concretos por post
@@ -163,6 +173,129 @@ const POST_STYLES = {
   ]
 }
 
+// ==================== HOOK FRAMEWORKS (OPENING STRUCTURES) ====================
+
+// Based on proven X-creator techniques for grabbing attention
+// Combined with POST_STYLES for 8x8 = 64 possible combinations
+const HOOK_FRAMEWORKS = {
+  'en': [
+    {
+      name: 'extreme',
+      instruction: 'Use an extreme statement. "The best/worst/most X I\'ve ever seen." Overdeliver on the promise.',
+      examples: ['worst crash ive seen this year', 'best shortcut i learned this month', 'the most underrated AI tool rn']
+    },
+    {
+      name: 'aida',
+      instruction: 'AIDA: Attention (hook) -> Interest (what\'s in it for them) -> Desire (make them want it) -> Action (what to do).',
+      examples: ['most devs waste hours on X. i did too. then i found Y. now Z', 'everyone sleeping on this feature. it saves me 30min daily. try it']
+    },
+    {
+      name: 'pas',
+      instruction: 'PAS: Problem (name it) -> Agitate (make them feel it) -> Solution (offer the fix).',
+      examples: ['context switching kills your flow. been there. this fixed it', 'sick of losing to FOMO? this rule changed everything']
+    },
+    {
+      name: 'bab',
+      instruction: 'BAB: Before (where you were) -> After (where you are now) -> Bridge (how you got there). Show transformation.',
+      examples: ['used to spend 3h debugging. now 20min. the trick?', 'portfolio was -40%. now green. what changed:']
+    },
+    {
+      name: 'emotional',
+      instruction: 'Lead with RAW emotion (frustration, surprise, excitement). Then mix in the lesson or insight.',
+      examples: ['almost rage-quit yesterday. then realized...', 'got rekt today. pain. but heres what i shouldve done']
+    },
+    {
+      name: 'results',
+      instruction: 'Lead with RESULTS you achieved. Then tell them how. Builds authority.',
+      examples: ['shipped 3 features today instead of 1. heres my setup', 'turned $500 into $2k this month. not luck - strategy']
+    },
+    {
+      name: 'client',
+      instruction: 'Use THIRD-PARTY proof. What a friend/colleague/junior discovered. Builds credibility without bragging.',
+      examples: ['friend asked me to review his code. found this gem', 'junior on my team showed me a trick i didnt know']
+    },
+    {
+      name: 'idea',
+      instruction: 'ONE powerful line that stands alone. No explanation needed. Punchy, memorable, quotable.',
+      examples: ['AI wont replace devs. devs using AI will replace devs not using it', 'the market rewards patience. every. single. time.']
+    }
+  ],
+  'pt-BR': [
+    {
+      name: 'extreme',
+      instruction: 'Use um extremo. "O melhor/pior/mais X que ja vi." Entregue mais do que prometeu.',
+      examples: ['pior crash que vi esse ano', 'melhor atalho que aprendi esse mes', 'a ferramenta mais subestimada de AI agora']
+    },
+    {
+      name: 'aida',
+      instruction: 'AIDA: Atencao (gancho) -> Interesse (o que ganham) -> Desejo (fazer querer) -> Acao (o que fazer).',
+      examples: ['maioria dos devs perde horas com X. eu tambem perdia. achei Y. agora Z', 'ngm conhece essa feature. economiza 30min por dia. testa']
+    },
+    {
+      name: 'pas',
+      instruction: 'PAS: Problema (nomeia) -> Agita (faz sentir) -> Solucao (oferece a saida).',
+      examples: ['trocar de contexto mata seu flow. ja passei por isso. isso resolveu', 'cansado de perder trade por FOMO? essa regra mudou tudo']
+    },
+    {
+      name: 'bab',
+      instruction: 'BAB: Antes (onde estava) -> Depois (onde esta) -> Ponte (como chegou). Mostra transformacao.',
+      examples: ['gastava 3h debugando. agora 20min. o truque?', 'carteira tava -40%. agora verde. o que mudou:']
+    },
+    {
+      name: 'emotional',
+      instruction: 'Comeca com EMOCAO crua (frustracao, surpresa, animacao). Depois mistura a licao.',
+      examples: ['quase larguei tudo ontem. dai percebi...', 'tomei loss hoje. dor. mas o que eu devia ter feito']
+    },
+    {
+      name: 'results',
+      instruction: 'Comeca com RESULTADO que alcancou. Depois conta como. Constroi autoridade.',
+      examples: ['entreguei 3 features hoje ao inves de 1. meu setup', 'transformei $500 em $2k esse mes. nao foi sorte - estrategia']
+    },
+    {
+      name: 'client',
+      instruction: 'Usa prova de TERCEIROS. O que amigo/colega/junior descobriu. Credibilidade sem parecer convencido.',
+      examples: ['amigo pediu pra revisar codigo dele. achei essa perola', 'junior do time me mostrou um truque que eu nao sabia']
+    },
+    {
+      name: 'idea',
+      instruction: 'UMA frase poderosa que fica de pe sozinha. Sem explicacao. Direto, memoravel, quotable.',
+      examples: ['AI nao vai substituir dev. dev usando AI vai substituir dev sem AI', 'mercado premia paciencia. toda. santa. vez.']
+    }
+  ]
+}
+
+// ==================== SELECTION FUNCTIONS ====================
+
+/**
+ * Select style using learning engine weights (or random if not available)
+ */
+function selectStyle(language) {
+  const styles = POST_STYLES[language] || POST_STYLES['en']
+  const styleNames = styles.map(s => s.name)
+
+  if (learningEngine) {
+    const selectedName = learningEngine.weightedSelect(styleNames, 'styles')
+    return styles.find(s => s.name === selectedName) || styles[0]
+  }
+
+  return styles[Math.floor(Math.random() * styles.length)]
+}
+
+/**
+ * Select hook using learning engine weights (or random if not available)
+ */
+function selectHook(language) {
+  const hooks = HOOK_FRAMEWORKS[language] || HOOK_FRAMEWORKS['en']
+  const hookNames = hooks.map(h => h.name)
+
+  if (learningEngine) {
+    const selectedName = learningEngine.weightedSelect(hookNames, 'hooks')
+    return hooks.find(h => h.name === selectedName) || hooks[0]
+  }
+
+  return hooks[Math.floor(Math.random() * hooks.length)]
+}
+
 // ==================== POST GENERATION ====================
 
 /**
@@ -172,7 +305,7 @@ const POST_STYLES = {
  * @param {string} angle - Suggested angle
  * @param {string} language - Language code (en or pt-BR)
  * @param {number} retries - Retry count
- * @returns {Promise<string>} Generated post
+ * @returns {Promise<Object>} Generated post with metadata
  */
 export async function generatePost(topic, newsContext, angle, language = 'pt-BR', retries = 2) {
   // Build system prompt based on language and topic
@@ -180,10 +313,13 @@ export async function generatePost(topic, newsContext, angle, language = 'pt-BR'
   const topicContext = TOPIC_CONTEXT[topic]?.[language] || ''
   const fullSystemPrompt = basePrompt + topicContext
 
-  // Randomly select a style for variety
-  const styles = POST_STYLES[language] || POST_STYLES['en']
-  const randomStyle = styles[Math.floor(Math.random() * styles.length)]
-  console.log(`      [style: ${randomStyle.name}]`)
+  // Select STYLE using learning weights
+  const selectedStyle = selectStyle(language)
+
+  // Select HOOK using learning weights
+  const selectedHook = selectHook(language)
+
+  console.log(`      [style: ${selectedStyle.name} + hook: ${selectedHook.name}]`)
 
   const userPrompt = language === 'en'
     ? `TOPIC: ${topic}
@@ -193,21 +329,23 @@ ${newsContext}
 
 ANGLE: ${angle}
 
-STYLE FOR THIS POST: ${randomStyle.instruction}
+=== YOUR ASSIGNMENT ===
+TONE/STYLE: ${selectedStyle.instruction}
+HOOK FRAMEWORK: ${selectedHook.instruction}
+HOOK EXAMPLES: ${selectedHook.examples.join(' | ')}
 
-Write ONE post like a real human would. NOT like AI.
+Write ONE post combining this TONE with this HOOK structure.
 
 CRITICAL:
-- Sound like you're texting a friend, not writing an essay
-- ONE point only, don't cram multiple facts
-- Use casual language naturally (don't force it)
-- VARY your style - this time go with: ${randomStyle.name}
-- Short. Punchy. Real.
-- NEVER use words from the banned list
-- Can start lowercase
-- 0-2 hashtags (sometimes none is fine)
+- Use the hook framework to structure your opening
+- Apply the tone throughout
+- Sound like texting a friend, not writing an essay
+- ONE point only
+- NEVER use banned words
+- 0-2 hashtags
+- 120-250 chars
 
-Just the post text. 120-250 chars.`
+Just the post text.`
     : `TOPICO: ${topic}
 
 DADOS:
@@ -215,21 +353,23 @@ ${newsContext}
 
 ANGULO: ${angle}
 
-ESTILO DESSE POST: ${randomStyle.instruction}
+=== SUA TAREFA ===
+TOM/ESTILO: ${selectedStyle.instruction}
+FRAMEWORK DE HOOK: ${selectedHook.instruction}
+EXEMPLOS DE HOOK: ${selectedHook.examples.join(' | ')}
 
-Escreva UM post como humano real. NAO como IA.
+Escreva UM post combinando esse TOM com essa estrutura de HOOK.
 
 CRITICO:
+- Use o framework de hook pra estruturar a abertura
+- Aplique o tom ao longo do post
 - Som de mensagem pra amigo, nao redacao
-- UM ponto so, nao empacota varios fatos
-- Linguagem casual natural (nao forca)
-- VARIE o estilo - dessa vez vai de: ${randomStyle.name}
-- Curto. Direto. Real.
-- NUNCA use palavras da lista proibida
-- Pode comecar minusculo
-- 0-2 hashtags (as vezes nenhuma ta ok)
+- UM ponto so
+- NUNCA use palavras proibidas
+- 0-2 hashtags
+- 120-250 chars
 
-So o texto do post. 120-250 chars.`
+So o texto do post.`
 
   const message = await anthropic.messages.create({
     model: 'claude-opus-4-5-20251101',
@@ -245,11 +385,22 @@ So o texto do post. 120-250 chars.`
 
   // Validate length - if too long (>500), regenerate
   if (post.length > 500 && retries > 0) {
-    console.log(`   ⚠️ Post muito longo (${post.length} chars), regenerando...`)
+    console.log(`   Post muito longo (${post.length} chars), regenerando...`)
     return generatePost(topic, newsContext, angle, language, retries - 1)
   }
 
-  return post
+  // Return object with post text and metadata for learning engine
+  return {
+    text: post,
+    _metadata: {
+      hook: selectedHook.name,
+      style: selectedStyle.name,
+      topic,
+      language,
+      chars: post.length,
+      generatedAt: new Date().toISOString()
+    }
+  }
 }
 
 /**
@@ -275,19 +426,24 @@ export async function generateAllPosts(curated, topics, formatForPrompt) {
       let angle = language === 'en' ? 'Analysis based on data' : 'Analise baseada nos dados'
       if (data.suggestedAngles && data.suggestedAngles.length > 0) {
         const a = data.suggestedAngles[0]
-        angle = typeof a === 'string' ? a : `[${a.type}] ${a.hook} → ${a.insight}`
+        angle = typeof a === 'string' ? a : `[${a.type}] ${a.hook} -> ${a.insight}`
       }
 
       console.log(`   Gerando: ${topic} (${language})...`)
 
       try {
-        const post = await generatePost(topic, fullContext, angle, language)
+        const result = await generatePost(topic, fullContext, angle, language)
+        // Handle both object {text, _metadata} and plain string (backward compat)
+        const postText = typeof result === 'string' ? result : result.text
+        const metadata = result._metadata || {}
         posts.push({
           topic,
           language,
-          post,
+          post: postText,
           sentiment: data.sentiment,
-          chars: post.length
+          chars: postText.length,
+          hook: metadata.hook,
+          style: metadata.style
         })
       } catch (err) {
         console.log(`   ⚠️ Erro em ${topic} (${language}): ${err.message}`)
@@ -309,14 +465,47 @@ export async function generateAllPosts(curated, topics, formatForPrompt) {
 export async function generateMultiplePosts(topic, newsContext, angles, language = 'pt-BR') {
   const posts = []
   for (const angle of angles) {
-    const post = await generatePost(topic, newsContext, angle, language)
-    posts.push({ angle, post, language })
+    const result = await generatePost(topic, newsContext, angle, language)
+    const postText = typeof result === 'string' ? result : result.text
+    const metadata = result._metadata || {}
+    posts.push({
+      angle,
+      post: postText,
+      language,
+      hook: metadata.hook,
+      style: metadata.style
+    })
   }
   return posts
+}
+
+/**
+ * Get current learning stats (for debugging/monitoring)
+ */
+export function getLearningStats() {
+  if (!learningEngine) {
+    return { available: false }
+  }
+
+  const learnings = learningEngine.loadLearnings()
+  return {
+    available: true,
+    totalPostsAnalyzed: learnings.totalPostsAnalyzed,
+    topHooks: Object.entries(learnings.weights.hooks)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 3)
+      .map(([name, weight]) => ({ name, weight })),
+    topStyles: Object.entries(learnings.weights.styles)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 3)
+      .map(([name, weight]) => ({ name, weight })),
+    lastUpdated: learnings.lastUpdated
+  }
 }
 
 export default {
   generatePost,
   generateAllPosts,
-  generateMultiplePosts
+  generateMultiplePosts,
+  getLearningStats
 }

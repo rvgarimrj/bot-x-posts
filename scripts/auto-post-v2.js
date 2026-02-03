@@ -141,13 +141,18 @@ async function main() {
       console.log(`   Gerando: ${topic} (${langLabel})...`)
 
       try {
-        const post = await generatePost(topic, fullContext, angle, language)
+        const result = await generatePost(topic, fullContext, angle, language)
+        // Handle both object {text, _metadata} and plain string
+        const postText = typeof result === 'string' ? result : result.text
+        const metadata = result._metadata || {}
         posts.push({
           topic,
           language,
-          post,
+          post: postText,
           sentiment: data.sentiment,
-          chars: post.length
+          chars: postText.length,
+          hook: metadata.hook,
+          style: metadata.style
         })
       } catch (err) {
         console.log(`   ⚠️ Erro em ${topic} (${langLabel}): ${err.message}`)

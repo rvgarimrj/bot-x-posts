@@ -1,12 +1,22 @@
 {
   "name": "bot-x-posts",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "main": "index.js",
   "scripts": {
     "start": "node scripts/cron-daemon.js",
+    "start:v2": "node scripts/cron-daemon-v2.js",
     "post": "node scripts/interactive-post.js",
-    "test-auth": "node scripts/debug-auth.js"
+    "post:v2": "node scripts/auto-post-v2.js",
+    "analyze": "node scripts/daily-analysis.js",
+    "test-auth": "node scripts/debug-auth.js",
+    "test:source": "node scripts/test-source.js",
+    "test:curate": "node scripts/test-curate-v3.js",
+    "test:generate": "node scripts/test-generate-v2.js",
+    "learn": "node scripts/test-learning.js",
+    "learn:analyze": "node scripts/test-learning.js analyze",
+    "learn:weights": "node scripts/test-learning.js weights",
+    "learn:report": "node scripts/test-learning.js report"
   },
   "keywords": [],
   "author": "",
