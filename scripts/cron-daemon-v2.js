@@ -1,15 +1,15 @@
 /**
  * Cron Daemon V2 - Multi-Source Bilingual Bot
  *
- * Schedule: Dynamic based on engagement data (defaults to 5 slots)
- * Posts: 8 per slot (4 topics x 2 languages)
+ * Schedule: Every 2h from 8h to 23h (9 slots)
+ * Posts: 8 per slot (4 topics x 2 languages) = 72 posts/day
  * Days: Every day (0-6)
  *
  * Features:
- * - Dynamic scheduling based on engagement analysis
+ * - High volume posting for faster learning
  * - Health check at 00:01
  * - Learning cycle at 23:59
- * - Fallback to default hours (Brazil/USA overlap)
+ * - Dynamic schedule adjustment based on engagement
  */
 
 import 'dotenv/config'
@@ -26,12 +26,10 @@ const PIDFILE = path.join(process.cwd(), 'logs', 'daemon-v2.pid')
 
 // ==================== DEFAULT SCHEDULE ====================
 
-// Default hours when no engagement data available
-// Optimized for Brazil (BRT) + USA (EST) overlap
-// Brazil peak: 8h, 12h, 18h, 21h BRT
-// USA peak: 9h, 13h, 17h, 21h EST = 12h, 16h, 20h, 0h BRT
-// Combined overlap focus: 12h, 18h BRT (both audiences active)
-const DEFAULT_HOURS = [0, 8, 12, 18, 22]
+// Every 2 hours from 8h to 22h + 23h (9 slots)
+// More posts = more data for learning engine
+// 8 posts per slot = 72 posts/day
+const DEFAULT_HOURS = [8, 10, 12, 14, 16, 18, 20, 22, 23]
 
 // Minimum posts analyzed to trust engagement data
 const MIN_POSTS_FOR_DYNAMIC_SCHEDULE = 30
