@@ -12,10 +12,10 @@
 
 Bot automatizado para postar no X (Twitter) via Puppeteer conectado ao Chrome em modo debug. Gera posts bilingues (EN + PT-BR) sobre crypto, investing, AI e vibeCoding usando curadoria multi-fonte + Claude.
 
-## Arquitetura V2 (Multi-Source Bilingual)
+## Arquitetura V2 (Multi-Source Bilingual + Reply Monitor)
 
 ```
-Cron (8h,10h,12h,14h,16h,18h,20h - Daily)
+Cron (8h,10h,12h,14h,16h,18h,20h,22h,23h - Daily)
     │
     ▼
 ┌─────────────────────────────────────────────────┐
@@ -65,18 +65,33 @@ Cron (8h,10h,12h,14h,16h,18h,20h - Daily)
 | 16h | 8 | crypto, investing, ai, vibeCoding | EN + PT-BR |
 | 18h | 8 | crypto, investing, ai, vibeCoding | EN + PT-BR |
 | 20h | 8 | crypto, investing, ai, vibeCoding | EN + PT-BR |
+| 22h | 8 | crypto, investing, ai, vibeCoding | EN + PT-BR |
+| 23h | 8 | crypto, investing, ai, vibeCoding | EN + PT-BR |
 
-**Total:** 56 posts/dia x 7 dias = 392 posts/semana
+**Total:** 72 posts/dia x 7 dias = 504 posts/semana
+
+### Ciclos Automaticos Adicionais
+
+| Horario | Funcao |
+|---------|--------|
+| A cada hora (:30) | Reply Monitor - responde comentarios |
+| 00:01 | Health Check |
+| 23:59 | Daily Learning - analise + ajuste de pesos + relatorio |
 
 ## Arquivos Principais
 
-### V2 (Novo - Multi-Source Bilingual)
+### V2 (Novo - Multi-Source Bilingual + Reply Monitor)
 | Arquivo | Funcao |
 |---------|--------|
-| `scripts/cron-daemon-v2.js` | Daemon V2: 7 horarios, todos os dias |
+| `scripts/cron-daemon-v2.js` | Daemon V2: 9 horarios + reply monitor + learning |
 | `scripts/auto-post-v2.js` | Fluxo V2: 8 posts (4 topicos x 2 idiomas) |
+| `scripts/daily-learning.js` | Ciclo de aprendizado diario (23:59) |
 | `src/curate-v3.js` | Curadoria multi-fonte com fallback chains |
 | `src/claude-v2.js` | Geracao bilingue (EN + PT-BR) + Hook Frameworks |
+| `src/reply-monitor.js` | Monitora e responde comentarios com Claude |
+| `src/learning-engine.js` | Analisa performance, ajusta pesos |
+| `src/analytics-monitor.js` | Coleta metricas do X Analytics |
+| `src/engagement-analyzer.js` | Analisa melhores horarios por regiao |
 | `src/sources/` | Modulos de fontes de dados |
 
 ### V1 (Legacy)
@@ -92,6 +107,16 @@ Cron (8h,10h,12h,14h,16h,18h,20h - Daily)
 |---------|--------|
 | `src/puppeteer-post.js` | Posta no X via Chrome debug |
 | `src/telegram-v2.js` | Notificacoes Telegram |
+| `src/telegram-report.js` | Formatadores de relatorios Telegram |
+
+### Arquivos de Dados
+| Arquivo | Funcao |
+|---------|--------|
+| `data/learnings.json` | Pesos e scores do learning engine |
+| `data/replies-log.json` | Log de todas as respostas enviadas |
+| `data/replied-ids.json` | IDs de comentarios ja respondidos |
+| `data/GOALS.md` | Metas de monetizacao (5M impressoes, 500 premium, 2000 verified) |
+| `logs/daily-reports/` | Relatorios diarios em JSON |
 
 ## Fontes de Dados por Topico (V2)
 
@@ -240,6 +265,19 @@ INSTRUÇÕES EXTRAS:
 # Iniciar daemon V2
 npm run start:v2
 
+# Comandos interativos do daemon (digitar no terminal):
+#   run (r)      - Executa ciclo de postagem
+#   learn (l)    - Executa ciclo de aprendizado
+#   reply (rp)   - Verifica e responde comentarios
+#   health (h)   - Executa health check
+#   schedule (sc) - Mostra horarios dinamicos
+#   status (s)   - Mostra status e estatisticas
+#   help (?)     - Menu de ajuda
+
+# Testar reply monitor
+node src/reply-monitor.js              # Executa ciclo real
+node src/reply-monitor.js --dry-run    # Simula sem postar
+
 # Testar uma source individual
 node scripts/test-source.js coingecko
 node scripts/test-source.js reddit investing
@@ -258,6 +296,22 @@ node scripts/test-generate-v2.js crypto en  # Especifico
 
 # Rodar ciclo completo (dry-run)
 node scripts/auto-post-v2.js
+
+# Rodar learning manualmente
+node scripts/daily-learning.js
+
+# ===== Gerenciamento do Daemon =====
+
+# Ver logs em tempo real
+tail -f logs/daemon-v2.log
+
+# Reiniciar daemon V2
+pkill -9 -f "cron-daemon-v2"
+nohup node scripts/cron-daemon-v2.js > logs/daemon-v2.log 2>&1 &
+
+# Verificar PID
+cat logs/daemon-v2.pid
+ps aux | grep cron-daemon-v2
 
 # ===== V1 (Legacy) =====
 
@@ -280,6 +334,12 @@ node scripts/auto-post.js vibeCoding
 
 # Verificar Chrome conectado
 curl -s http://localhost:9222/json/version
+
+# Ver dados de aprendizado
+cat data/learnings.json | jq '.scores'
+
+# Ver log de replies
+cat data/replies-log.json | jq '.stats'
 ```
 
 ## Problemas Conhecidos e Solucoes
@@ -297,7 +357,7 @@ curl -s http://localhost:9222/json/version
 
 ## Fluxo de Postagem (V2)
 
-1. Cron dispara a cada 2h (8h-20h, todos os dias)
+1. Cron dispara a cada 2h (8h-23h, todos os dias)
 2. `curateContentV3()` busca de multiplas fontes em paralelo
 3. Fallback chain: Primary -> Secondary -> RSS
 4. `generatePost()` gera 8 posts (4 topicos x 2 idiomas)
@@ -305,6 +365,17 @@ curl -s http://localhost:9222/json/version
 6. `postTweet()` digita no X como humano (delays variaveis)
 7. 60s entre cada post (total ~12 min por slot)
 8. Confirmacao no Telegram
+
+## Fluxo de Reply Monitor
+
+1. Cron dispara a cada hora (minuto :30)
+2. `fetchMentions()` busca mencoes recentes via Twitter API
+3. Filtra IDs ja respondidos (evita duplicatas)
+4. `classifyComment()` identifica tipo (question, agreement, joke, etc.)
+5. `selectReplyStyle()` escolhe estilo apropriado (friendly, helpful, funny, etc.)
+6. Claude gera resposta humanizada (max 200 chars + emojis)
+7. `postReply()` publica a resposta no X
+8. Log salvo em `data/replies-log.json` para learning
 
 ## Diferenciacao EN vs PT-BR
 
@@ -651,6 +722,86 @@ O sistema V2 e **retro-compativel** com V1:
 - Comandos V1 (`npm run start`, `npm run analyze`) continuam funcionando
 - Daemon V1 pode coexistir com V2 (mas recomenda-se usar apenas V2)
 
+## Reply Monitor (Resposta Automatica a Comentarios)
+
+Sistema que monitora mencoes e comentarios nos posts, gerando respostas humanizadas com Claude.
+
+### Arquivos
+| Arquivo | Funcao |
+|---------|--------|
+| `src/reply-monitor.js` | Busca mencoes, classifica, gera e posta respostas |
+| `data/replies-log.json` | Log de todas respostas enviadas |
+| `data/replied-ids.json` | IDs ja respondidos (evita duplicatas) |
+
+### Ciclo de Execucao
+- **Frequencia:** A cada hora (minuto :30)
+- **Max por ciclo:** 5 respostas
+- **Delay entre respostas:** 30 segundos
+
+### Classificacao de Comentarios
+
+| Tipo | Detecta | Prioridade | Estilos de Resposta |
+|------|---------|------------|---------------------|
+| `question` | ?, como, how, what, why | Alta | helpful, friendly |
+| `disagreement` | discordo, disagree, mas, but | Alta | friendly, curious |
+| `agreement` | concordo, agree, exactly, fato | Media | grateful, friendly |
+| `compliment` | great, awesome, top, mito | Media | grateful, funny |
+| `joke` | kk, lol, haha, rsrs | Baixa | funny, friendly |
+| `generic` | (fallback) | Baixa | friendly, grateful |
+
+### Estilos de Resposta (REPLY_STYLES)
+
+| Estilo | Tom | Emojis |
+|--------|-----|--------|
+| `friendly` | Super amigavel e caloroso | 😊🙌✨ |
+| `helpful` | Prestativo e informativo, mas leve | 💡👍📚 |
+| `funny` | Bem humorado, piada leve | 😂🤣💀 |
+| `grateful` | Agradece genuinamente | 🙏❤️🔥 |
+| `curious` | Interesse genuino, pergunta de volta | 🤔👀💭 |
+
+### Fluxo de Aprendizado de Replies
+```
+1. Recebe mencao → Classifica tipo do comentario
+2. Seleciona estilo baseado no tipo
+3. Claude gera resposta humanizada (max 200 chars + emojis)
+4. Posta reply no X
+5. Loga para analise posterior
+6. Learning engine analisa quais estilos performam melhor
+```
+
+### Comandos
+```bash
+# Via daemon interativo
+reply (rp)              # Executa ciclo de replies manualmente
+
+# Direto
+node src/reply-monitor.js            # Executa ciclo real
+node src/reply-monitor.js --dry-run  # Simula sem postar
+```
+
+### Regras de Geracao de Respostas
+- SEMPRE usar emojis (2-4 por resposta)
+- Ser educado, gentil e bem humorado
+- Respostas CURTAS (max 200 chars)
+- NUNCA parecer robo ou formal
+- Usar portugues brasileiro casual
+- Se for pergunta, responder de forma util
+- Se for elogio, agradecer genuinamente
+- Se for critica, ser respeitoso mas manter opiniao
+- Se for piada, entrar na brincadeira
+
+### Exemplos de Respostas Geradas
+```
+Comentario: "Como voce faz isso?"
+Resposta: "@usuario boa pergunta! 🤔 na real, depende muito do contexto, mas geralmente... 💡"
+
+Comentario: "kkkk exatamente isso"
+Resposta: "@usuario 😂🙌 glad you get it!"
+
+Comentario: "Discordo, acho que BTC vai subir"
+Resposta: "@usuario hmm interessante ponto de vista 👀 o que te faz pensar isso?"
+```
+
 ## Notas de Desenvolvimento
 
 - Posts max 500 chars
@@ -692,6 +843,9 @@ Sempre logar no puppeteer-post.js:
 3. Se texto < 80% do esperado, avisar antes de postar
 
 ## Historico de Commits
+- **2026-02-04 13:27** Add Reply Monitor: auto-respond to comments with Claude (src/reply-monitor.js, scripts/cron-daemon-v2.js, .claude/CLAUDE.md)
+- **2026-02-04 10:30** [`4a000b5`] Update schedule: post every 2h from 8h to 23h (72 posts/day) (scripts/cron-daemon-v2.js)
+- **2026-02-04 10:20** [`6c85cc1`] Add Self-Learning V2 System with Goals Tracking (.claude/CLAUDE.md,data/GOALS.md,package.json,scripts/cron-daemon-v2.js,scripts/daemon-manager.js)
 - **2026-02-03 20:09** [`3cce8fb`] Document self-learning system in CLAUDE.md (.claude/CLAUDE.md)
 - **2026-02-03 20:09** [`1ec2efe`] Add Hook Frameworks + Self-Learning Analytics System (.claude/CLAUDE.md,package.json,scripts/auto-post-v2.js,scripts/cron-daemon-v2.js,scripts/daily-analysis.js)
 - **2026-02-03** Document Hook Frameworks: 8 styles x 8 hooks = 64 combinations (.claude/CLAUDE.md)

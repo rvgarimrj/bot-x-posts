@@ -18,6 +18,7 @@ import { spawn, execSync } from 'child_process'
 import { sendNotification } from '../src/telegram-v2.js'
 import { checkChromeConnection } from '../src/puppeteer-post.js'
 import { loadLearnings } from '../src/learning-engine.js'
+import { processReplies, getReplyStats } from '../src/reply-monitor.js'
 import fs from 'fs'
 import path from 'path'
 
@@ -285,6 +286,12 @@ const HEALTH_CHECK = {
   desc: '00:01 Health Check'
 }
 
+// Reply monitoring every hour (check for comments and respond)
+const REPLY_MONITOR = {
+  cron: '30 * * * *', // Every hour at :30
+  desc: 'Every hour Reply Monitor'
+}
+
 // Initialize schedule
 let scheduleInfo = loadSchedule()
 currentSchedule = scheduleInfo.schedule
@@ -296,6 +303,7 @@ console.log(`[SCHEDULE] Razao: ${scheduleInfo.reason}`)
 console.log(`[TOPICS] Topics: ${TOPICS.join(', ')}`)
 console.log(`[LANGUAGES] Languages: ${LANGUAGES.join(', ')}`)
 console.log(`[POSTS] Total: ${currentSchedule.length * TOPICS.length * LANGUAGES.length} posts/dia`)
+console.log(`[REPLY] Reply monitor: a cada hora (:30)`)
 console.log(`[HEALTH] Health check: 00:01`)
 console.log(`[LEARNING] Daily learning cycle: 23:59`)
 console.log(`[START] Iniciado em: ${new Date().toLocaleString('pt-BR', { timeZone: TIMEZONE })}`)
@@ -376,6 +384,31 @@ async function runDailyLearning() {
   })
 }
 
+// ==================== REPLY MONITORING ====================
+
+async function runReplyMonitor() {
+  const now = new Date().toLocaleString('pt-BR', { timeZone: TIMEZONE })
+
+  console.log(`\n[REPLY] [${now}] Verificando comentarios e menções...`)
+
+  try {
+    const result = await processReplies(5, false) // Max 5 replies per cycle
+
+    console.log(`[REPLY] Processados: ${result.processed}, Respondidos: ${result.replied}`)
+
+    if (result.replied > 0) {
+      await sendNotification(
+        `[REPLY] <b>Reply Monitor</b>\n\n` +
+        `✅ ${result.replied} respostas enviadas\n` +
+        `📋 ${result.processed} comentarios processados\n\n` +
+        `<i>${now}</i>`
+      )
+    }
+  } catch (err) {
+    console.error(`[REPLY] Erro: ${err.message}`)
+  }
+}
+
 /**
  * Check if schedule should be updated based on new learnings
  */
@@ -441,10 +474,20 @@ cron.schedule(DAILY_LEARNING.cron, () => {
 
 console.log(`   [OK] Agendado: ${DAILY_LEARNING.desc}`)
 
+// Schedule reply monitoring every hour
+cron.schedule(REPLY_MONITOR.cron, () => {
+  console.log(`\n[CRON] Cron disparado: Reply Monitor`)
+  runReplyMonitor()
+}, {
+  timezone: TIMEZONE
+})
+
+console.log(`   [OK] Agendado: ${REPLY_MONITOR.desc}`)
+
 // ==================== INTERACTIVE COMMANDS ====================
 
 console.log('\n[RUNNING] Daemon V2 rodando. Ctrl+C para parar.')
-console.log('   Comandos: run, learn (l), health (h), schedule (sc), status (s), help (?)\n')
+console.log('   Comandos: run, learn (l), reply (rp), health (h), schedule (sc), status (s), help (?)\n')
 
 process.stdin.setEncoding('utf8')
 process.stdin.on('data', async (input) => {
@@ -459,6 +502,9 @@ process.stdin.on('data', async (input) => {
   } else if (cmd === 'health' || cmd === 'h') {
     console.log('[MANUAL] Executando health check manualmente...')
     await runHealthCheck()
+  } else if (cmd === 'reply' || cmd === 'rp') {
+    console.log('[MANUAL] Executando reply monitor manualmente...')
+    await runReplyMonitor()
   } else if (cmd === 'schedule' || cmd === 'sc') {
     // Show current schedule with details
     console.log('\n[SCHEDULE] Horarios dinamicos atuais:')
@@ -481,13 +527,25 @@ process.stdin.on('data', async (input) => {
     currentSchedule.forEach(({ hour }) => {
       console.log(`   ${hour}h: ${TOPICS.length * LANGUAGES.length} posts`)
     })
+    console.log(`   :30 (toda hora): Reply Monitor`)
     console.log(`   00:01: Health Check`)
     console.log(`   23:59: Daily Learning (analyze + adjust + report)`)
-    console.log(`[TOTAL] Total diario: ${currentSchedule.length * TOPICS.length * LANGUAGES.length} posts + health check + learning report`)
+
+    // Show reply stats
+    try {
+      const replyStats = getReplyStats()
+      console.log(`[REPLIES] Total: ${replyStats.total} respostas enviadas`)
+      if (Object.keys(replyStats.byType).length > 0) {
+        console.log(`   Por tipo: ${Object.entries(replyStats.byType).map(([k, v]) => `${k}: ${v}`).join(', ')}`)
+      }
+    } catch {}
+
+    console.log(`[TOTAL] Total diario: ${currentSchedule.length * TOPICS.length * LANGUAGES.length} posts + replies + health + learning`)
   } else if (cmd === 'help' || cmd === '?') {
     console.log('Comandos:')
     console.log('  run (r)      - Executa ciclo de postagem')
     console.log('  learn (l)    - Executa ciclo de aprendizado')
+    console.log('  reply (rp)   - Verifica e responde comentarios')
     console.log('  health (h)   - Executa health check')
     console.log('  schedule (sc) - Mostra horarios dinamicos detalhados')
     console.log('  status (s)   - Mostra horarios agendados')
@@ -513,6 +571,7 @@ sendNotification(
   `[TOPICS] Topics: ${TOPICS.join(', ')}\n` +
   `[LANG] Languages: EN + PT-BR\n` +
   `[POSTS] ${currentSchedule.length * TOPICS.length * LANGUAGES.length} posts/dia\n` +
+  `[REPLY] Reply monitor: a cada hora (:30)\n` +
   `[HEALTH] Health check: 00:01\n` +
   `[LEARNING] Self-learning at 23:59\n` +
   `[TIMEZONE] Timezone: ${TIMEZONE}`
