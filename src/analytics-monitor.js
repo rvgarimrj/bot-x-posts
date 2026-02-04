@@ -140,7 +140,7 @@ async function extractMetrics(page) {
   console.log('   Extraindo metricas da pagina...')
 
   // Aguarda pagina carregar completamente
-  await new Promise(r => setTimeout(r, 3000))
+  await new Promise(r => setTimeout(r, 5000))
 
   const metrics = await page.evaluate(() => {
     const result = {
@@ -156,25 +156,51 @@ async function extractMetrics(page) {
       rawData: {}
     }
 
-    // Funcao auxiliar para extrair texto de elementos
-    const getText = (selector) => {
-      const el = document.querySelector(selector)
-      return el ? el.textContent.trim() : null
+    // Helper: extrai numero de string (suporta K, M, B, virgulas, pontos)
+    const extractNumber = (text) => {
+      if (!text) return null
+      const cleaned = text.trim().toUpperCase()
+      if (cleaned.endsWith('K')) {
+        return Math.round(parseFloat(cleaned.replace(/[^0-9.]/g, '')) * 1000)
+      }
+      if (cleaned.endsWith('M')) {
+        return Math.round(parseFloat(cleaned.replace(/[^0-9.]/g, '')) * 1_000_000)
+      }
+      if (cleaned.endsWith('B')) {
+        return Math.round(parseFloat(cleaned.replace(/[^0-9.]/g, '')) * 1_000_000_000)
+      }
+      const numStr = cleaned.replace(/[,\.]/g, '').replace(/[^0-9]/g, '')
+      return parseInt(numStr, 10) || null
     }
 
-    // Funcao para encontrar metrica por label
-    const findMetricByLabel = (labelText) => {
-      const allElements = document.querySelectorAll('span, div, p')
-      for (const el of allElements) {
-        if (el.textContent.toLowerCase().includes(labelText.toLowerCase())) {
-          // Procura numero no elemento pai ou irmao
-          const parent = el.parentElement
-          if (parent) {
-            const numberEl = parent.querySelector('[dir="ltr"]') ||
-                            parent.previousElementSibling ||
-                            parent.nextElementSibling
-            if (numberEl) {
-              return numberEl.textContent.trim()
+    // Helper: encontra metrica por label (mais robusto)
+    const findMetricNearLabel = (labels) => {
+      for (const label of labels) {
+        // Procura em todos os elementos de texto
+        const walker = document.createTreeWalker(
+          document.body,
+          NodeFilter.SHOW_TEXT,
+          null,
+          false
+        )
+        let node
+        while (node = walker.nextNode()) {
+          if (node.textContent.toLowerCase().includes(label.toLowerCase())) {
+            // Procura numero no elemento pai, avos, ou irmaos
+            let current = node.parentElement
+            for (let depth = 0; depth < 4 && current; depth++) {
+              // Procura numeros no container
+              const allText = current.innerText || ''
+              const lines = allText.split('\n').map(l => l.trim()).filter(Boolean)
+              for (const line of lines) {
+                if (/^[\d,\.]+[KMB]?$/i.test(line)) {
+                  const num = extractNumber(line)
+                  if (num !== null && num > 0) {
+                    return line
+                  }
+                }
+              }
+              current = current.parentElement
             }
           }
         }
@@ -182,61 +208,65 @@ async function extractMetrics(page) {
       return null
     }
 
-    // Tenta diferentes abordagens para extrair metricas
+    // Abordagem 1: Busca estruturada por cards/metricas
+    const cards = document.querySelectorAll('[data-testid], [role="group"], section, article')
+    cards.forEach(card => {
+      const text = card.innerText || ''
+      const textLower = text.toLowerCase()
 
-    // Abordagem 1: Busca por data-testid
-    const testIdMappings = {
-      'impressions': ['impressions', 'impressionCount'],
-      'engagements': ['engagements', 'engagementCount'],
-      'newFollowers': ['newFollowers', 'followerCount', 'followers'],
-      'profileVisits': ['profileVisits', 'profileVisitCount']
-    }
+      // Procura numeros no card
+      const numbers = text.match(/[\d,\.]+[KMB]?/gi) || []
 
-    // Abordagem 2: Busca todos os elementos com numeros grandes
-    const allText = document.body.innerText
-    const sections = allText.split('\n').filter(line => line.trim())
-
-    // Procura padroes comuns de metricas
-    for (let i = 0; i < sections.length; i++) {
-      const line = sections[i].toLowerCase()
-      const nextLine = sections[i + 1] || ''
-      const prevLine = sections[i - 1] || ''
-
-      // Impressions
-      if (line.includes('impression') || line.includes('impresso')) {
-        const numMatch = (prevLine + ' ' + nextLine).match(/[\d,\.]+[KMB]?/i)
-        if (numMatch) result.rawData.impressions = numMatch[0]
+      if (textLower.includes('impression') || textLower.includes('impresso') || textLower.includes('visualiza')) {
+        const num = numbers.find(n => extractNumber(n) > 100) // Impressions geralmente > 100
+        if (num) result.rawData.impressions = num
       }
 
-      // Engagements
-      if (line.includes('engagement') || line.includes('engajament')) {
-        const numMatch = (prevLine + ' ' + nextLine).match(/[\d,\.]+[KMB]?/i)
-        if (numMatch) result.rawData.engagements = numMatch[0]
+      if (textLower.includes('engagement') || textLower.includes('engajament') || textLower.includes('interac')) {
+        const num = numbers.find(n => extractNumber(n) > 0)
+        if (num && !result.rawData.engagements) result.rawData.engagements = num
       }
 
-      // New followers
-      if (line.includes('follower') || line.includes('seguidor')) {
-        const numMatch = (prevLine + ' ' + nextLine).match(/[\d,\.]+[KMB]?/i)
-        if (numMatch) result.rawData.newFollowers = numMatch[0]
+      if ((textLower.includes('follower') || textLower.includes('seguidor')) && !textLower.includes('following')) {
+        const num = numbers.find(n => extractNumber(n) > 0)
+        if (num && !result.rawData.newFollowers) result.rawData.newFollowers = num
       }
 
-      // Profile visits
-      if (line.includes('profile visit') || line.includes('visita')) {
-        const numMatch = (prevLine + ' ' + nextLine).match(/[\d,\.]+[KMB]?/i)
-        if (numMatch) result.rawData.profileVisits = numMatch[0]
-      }
-    }
-
-    // Abordagem 3: Extrai todos os numeros visiveis na pagina
-    const numberElements = document.querySelectorAll('[dir="ltr"], .css-1jxf684, .r-poiln3')
-    const numbers = []
-    numberElements.forEach(el => {
-      const text = el.textContent.trim()
-      if (/^[\d,\.]+[KMB]?$/i.test(text)) {
-        numbers.push(text)
+      if (textLower.includes('profile visit') || textLower.includes('visita ao perfil') || textLower.includes('visita')) {
+        const num = numbers.find(n => extractNumber(n) > 0)
+        if (num && !result.rawData.profileVisits) result.rawData.profileVisits = num
       }
     })
-    result.rawData.allNumbers = numbers
+
+    // Abordagem 2: Busca por labels comuns
+    if (!result.rawData.impressions) {
+      result.rawData.impressions = findMetricNearLabel(['impressions', 'impressoes', 'impressões', 'views', 'visualizacoes'])
+    }
+    if (!result.rawData.engagements) {
+      result.rawData.engagements = findMetricNearLabel(['engagements', 'engajamentos', 'interactions', 'interacoes'])
+    }
+    if (!result.rawData.newFollowers) {
+      result.rawData.newFollowers = findMetricNearLabel(['new followers', 'novos seguidores', 'followers', 'seguidores'])
+    }
+    if (!result.rawData.profileVisits) {
+      result.rawData.profileVisits = findMetricNearLabel(['profile visits', 'visitas ao perfil', 'visitas'])
+    }
+
+    // Abordagem 3: Busca todos os numeros grandes (heuristica para impressions)
+    const allText = document.body.innerText
+    const bigNumbers = allText.match(/[\d,\.]+[KMB]|[\d]{4,}/gi) || []
+    result.rawData.allNumbers = bigNumbers.slice(0, 10)
+
+    // Se ainda nao temos impressions, pega o maior numero da pagina
+    if (!result.rawData.impressions && bigNumbers.length > 0) {
+      const sorted = bigNumbers
+        .map(n => ({ raw: n, val: extractNumber(n) }))
+        .filter(n => n.val !== null && n.val > 100)
+        .sort((a, b) => b.val - a.val)
+      if (sorted.length > 0) {
+        result.rawData.impressions = sorted[0].raw
+      }
+    }
 
     return result
   })
@@ -354,31 +384,41 @@ function generateReport(entry, comparison, projection) {
   const date = new Date().toLocaleDateString('pt-BR')
   const time = new Date().toLocaleTimeString('pt-BR')
 
+  // Helper function to safely format numbers
+  const safeLocale = (val) => {
+    if (val === undefined || val === null || isNaN(val)) return '0'
+    return val.toLocaleString()
+  }
+
+  const metrics = entry?.metrics || {}
+  const comp = comparison || {}
+  const proj = projection || {}
+
   let report = `
 =====================================
    ANALYTICS REPORT - ${date} ${time}
 =====================================
 
 METRICAS DO DIA:
-  Impressoes:     ${entry.metrics.impressions.toLocaleString()}
-  Engajamentos:   ${entry.metrics.engagements.toLocaleString()}
-  Novos seguid.:  ${entry.metrics.newFollowers.toLocaleString()}
-  Visitas perfil: ${entry.metrics.profileVisits.toLocaleString()}
+  Impressoes:     ${safeLocale(metrics.impressions)}
+  Engajamentos:   ${safeLocale(metrics.engagements)}
+  Novos seguid.:  ${safeLocale(metrics.newFollowers)}
+  Visitas perfil: ${safeLocale(metrics.profileVisits)}
 
 COMPARACAO COM DIA ANTERIOR:
-  Impressoes:     ${comparison.impressions.change >= 0 ? '+' : ''}${comparison.impressions.change.toLocaleString()} (${comparison.impressions.percent}%)
-  Engajamentos:   ${comparison.engagements.change >= 0 ? '+' : ''}${comparison.engagements.change.toLocaleString()} (${comparison.engagements.percent}%)
-  Novos seguid.:  ${comparison.newFollowers.change >= 0 ? '+' : ''}${comparison.newFollowers.change.toLocaleString()} (${comparison.newFollowers.percent}%)
-  Visitas perfil: ${comparison.profileVisits.change >= 0 ? '+' : ''}${comparison.profileVisits.change.toLocaleString()} (${comparison.profileVisits.percent}%)
+  Impressoes:     ${(comp.impressions?.change || 0) >= 0 ? '+' : ''}${safeLocale(comp.impressions?.change)} (${comp.impressions?.percent || 0}%)
+  Engajamentos:   ${(comp.engagements?.change || 0) >= 0 ? '+' : ''}${safeLocale(comp.engagements?.change)} (${comp.engagements?.percent || 0}%)
+  Novos seguid.:  ${(comp.newFollowers?.change || 0) >= 0 ? '+' : ''}${safeLocale(comp.newFollowers?.change)} (${comp.newFollowers?.percent || 0}%)
+  Visitas perfil: ${(comp.profileVisits?.change || 0) >= 0 ? '+' : ''}${safeLocale(comp.profileVisits?.change)} (${comp.profileVisits?.percent || 0}%)
 
 PROJECAO PARA META (5M impressoes):
-  Media diaria:   ${projection.dailyAverage.toLocaleString()} impressoes
-  Meta diaria:    ${projection.dailyTarget.toLocaleString()} impressoes
-  Total acumul.:  ${projection.totalImpressions.toLocaleString()} (${projection.percentComplete}%)
-  Faltam:         ${projection.remaining?.toLocaleString() || 'N/A'} impressoes
-  Dias restantes: ${projection.daysToGoal || 'N/A'}
-  Data projetada: ${projection.projectedDate || 'N/A'}
-  Status:         ${projection.onTrack ? 'NO RITMO' : 'ABAIXO DA META'}
+  Media diaria:   ${safeLocale(proj.dailyAverage)} impressoes
+  Meta diaria:    ${safeLocale(proj.dailyTarget || GOALS.impressions.dailyTarget)} impressoes
+  Total acumul.:  ${safeLocale(proj.totalImpressions)} (${proj.percentComplete || 0}%)
+  Faltam:         ${proj.remaining ? safeLocale(proj.remaining) : 'N/A'} impressoes
+  Dias restantes: ${proj.daysToGoal || 'N/A'}
+  Data projetada: ${proj.projectedDate || 'N/A'}
+  Status:         ${proj.onTrack ? 'NO RITMO' : 'ABAIXO DA META'}
 
 =====================================
 `

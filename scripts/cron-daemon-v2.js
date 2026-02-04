@@ -1,23 +1,44 @@
 /**
  * Cron Daemon V2 - Multi-Source Bilingual Bot
  *
- * Schedule: 5 time slots per day (8h, 12h, 18h, 22h, 0h)
+ * Schedule: Dynamic based on engagement data (defaults to 5 slots)
  * Posts: 8 per slot (4 topics x 2 languages)
  * Days: Every day (0-6)
- * Total: 40 posts/day
  *
- * Learning: Runs at 23:59 to analyze engagement and adjust weights
+ * Features:
+ * - Dynamic scheduling based on engagement analysis
+ * - Health check at 00:01
+ * - Learning cycle at 23:59
+ * - Fallback to default hours (Brazil/USA overlap)
  */
 
 import 'dotenv/config'
 import cron from 'node-cron'
 import { spawn, execSync } from 'child_process'
 import { sendNotification } from '../src/telegram-v2.js'
+import { checkChromeConnection } from '../src/puppeteer-post.js'
+import { loadLearnings } from '../src/learning-engine.js'
 import fs from 'fs'
 import path from 'path'
 
 const TIMEZONE = 'America/Sao_Paulo'
 const PIDFILE = path.join(process.cwd(), 'logs', 'daemon-v2.pid')
+
+// ==================== DEFAULT SCHEDULE ====================
+
+// Default hours when no engagement data available
+// Optimized for Brazil (BRT) + USA (EST) overlap
+// Brazil peak: 8h, 12h, 18h, 21h BRT
+// USA peak: 9h, 13h, 17h, 21h EST = 12h, 16h, 20h, 0h BRT
+// Combined overlap focus: 12h, 18h BRT (both audiences active)
+const DEFAULT_HOURS = [0, 8, 12, 18, 22]
+
+// Minimum posts analyzed to trust engagement data
+const MIN_POSTS_FOR_DYNAMIC_SCHEDULE = 30
+
+// Store active cron jobs for potential reschedule
+let activeJobs = []
+let currentSchedule = []
 
 // ==================== SINGLETON CHECK ====================
 
@@ -58,17 +79,201 @@ function checkSingleton() {
 
 checkSingleton()
 
-// ==================== SCHEDULE ====================
+// ==================== DYNAMIC SCHEDULE ====================
 
-// 5 slots per day, every day (0-6 = Sunday-Saturday)
-// Each slot posts 4 topics x 2 languages = 8 posts
-const SCHEDULE = [
-  { hour: 0,  cron: '0 0 * * *',  desc: '0h (Daily)' },
-  { hour: 8,  cron: '0 8 * * *',  desc: '8h (Daily)' },
-  { hour: 12, cron: '0 12 * * *', desc: '12h (Daily)' },
-  { hour: 18, cron: '0 18 * * *', desc: '18h (Daily)' },
-  { hour: 22, cron: '0 22 * * *', desc: '22h (Daily)' }
-]
+/**
+ * Get recommended posting hours based on engagement data
+ * Returns hours sorted by engagement score (best first)
+ */
+function getRecommendedSchedule() {
+  try {
+    const learnings = loadLearnings()
+
+    // Check if we have enough data
+    const totalPosts = learnings.totalPostsAnalyzed || 0
+    if (totalPosts < MIN_POSTS_FOR_DYNAMIC_SCHEDULE) {
+      console.log(`[SCHEDULE] Dados insuficientes (${totalPosts}/${MIN_POSTS_FOR_DYNAMIC_SCHEDULE} posts). Usando horarios default.`)
+      return {
+        hours: DEFAULT_HOURS,
+        source: 'default',
+        reason: `Insuficiente: ${totalPosts} posts analisados`
+      }
+    }
+
+    // Get hour scores from learnings
+    const hourScores = learnings.scores?.hours || {}
+
+    // Filter hours with enough data and sort by score
+    const scoredHours = Object.entries(hourScores)
+      .filter(([_, data]) => data.count >= 3) // At least 3 posts at that hour
+      .map(([hour, data]) => ({
+        hour: parseInt(hour),
+        score: data.score,
+        avgEngagement: data.avgEngagement,
+        avgImpressions: data.avgImpressions,
+        count: data.count
+      }))
+      .sort((a, b) => b.score - a.score)
+
+    if (scoredHours.length < 3) {
+      console.log(`[SCHEDULE] Poucos horarios com dados (${scoredHours.length}). Usando horarios default.`)
+      return {
+        hours: DEFAULT_HOURS,
+        source: 'default',
+        reason: `Poucos horarios: ${scoredHours.length} com dados`
+      }
+    }
+
+    // Select top 5 hours (or all if less than 5)
+    const topHours = scoredHours.slice(0, 5).map(h => h.hour)
+
+    // Sort chronologically for user-friendly display
+    topHours.sort((a, b) => a - b)
+
+    console.log(`[SCHEDULE] Horarios dinamicos baseados em ${totalPosts} posts:`)
+    scoredHours.slice(0, 5).forEach(h => {
+      console.log(`   ${h.hour}h: score ${Math.round(h.score)}, avg engagement ${Math.round(h.avgEngagement)}, ${h.count} posts`)
+    })
+
+    return {
+      hours: topHours,
+      source: 'engagement',
+      reason: `Baseado em ${totalPosts} posts`,
+      details: scoredHours.slice(0, 5)
+    }
+  } catch (err) {
+    console.error('[SCHEDULE] Erro ao carregar dados de engagement:', err.message)
+    return {
+      hours: DEFAULT_HOURS,
+      source: 'default',
+      reason: `Erro: ${err.message}`
+    }
+  }
+}
+
+/**
+ * Build schedule array from hours
+ */
+function buildSchedule(hours) {
+  return hours.map(hour => ({
+    hour,
+    cron: `0 ${hour} * * *`,
+    desc: `${hour}h (Daily)`
+  }))
+}
+
+/**
+ * Load or refresh schedule
+ */
+function loadSchedule() {
+  const recommended = getRecommendedSchedule()
+  const schedule = buildSchedule(recommended.hours)
+
+  return {
+    schedule,
+    source: recommended.source,
+    reason: recommended.reason,
+    details: recommended.details
+  }
+}
+
+// ==================== HEALTH CHECK ====================
+
+/**
+ * Perform health check and alert on issues
+ */
+async function runHealthCheck() {
+  const now = new Date().toLocaleString('pt-BR', { timeZone: TIMEZONE })
+  console.log(`\n[HEALTH] [${now}] Executando verificacao de saude...`)
+
+  const issues = []
+
+  // Check 1: Daemon is running (implicit - if we got here, it's running)
+  console.log('   [OK] Daemon rodando')
+
+  // Check 2: Chrome connection
+  try {
+    const chromeStatus = await checkChromeConnection()
+    if (chromeStatus.connected) {
+      console.log(`   [OK] Chrome conectado (${chromeStatus.version})`)
+    } else {
+      console.log('   [FAIL] Chrome NAO conectado na porta 9222')
+      issues.push('Chrome nao conectado na porta 9222')
+    }
+  } catch (err) {
+    console.log(`   [FAIL] Erro ao verificar Chrome: ${err.message}`)
+    issues.push(`Erro Chrome: ${err.message}`)
+  }
+
+  // Check 3: PID file exists and matches
+  try {
+    if (fs.existsSync(PIDFILE)) {
+      const pidContent = fs.readFileSync(PIDFILE, 'utf8').trim()
+      if (pidContent === process.pid.toString()) {
+        console.log('   [OK] PID file correto')
+      } else {
+        console.log(`   [WARN] PID file diferente (${pidContent} vs ${process.pid})`)
+        issues.push('PID file inconsistente')
+      }
+    } else {
+      console.log('   [WARN] PID file nao existe')
+      issues.push('PID file ausente')
+    }
+  } catch (err) {
+    console.log(`   [FAIL] Erro ao verificar PID: ${err.message}`)
+  }
+
+  // Check 4: Data directory accessible
+  const dataDir = path.join(process.cwd(), 'data')
+  try {
+    if (fs.existsSync(dataDir)) {
+      console.log('   [OK] Diretorio data/ acessivel')
+    } else {
+      console.log('   [WARN] Diretorio data/ nao existe (sera criado no primeiro uso)')
+    }
+  } catch (err) {
+    issues.push(`Erro data/: ${err.message}`)
+  }
+
+  // Check 5: Logs directory accessible
+  const logsDir = path.join(process.cwd(), 'logs')
+  try {
+    if (fs.existsSync(logsDir)) {
+      console.log('   [OK] Diretorio logs/ acessivel')
+    } else {
+      fs.mkdirSync(logsDir, { recursive: true })
+      console.log('   [OK] Diretorio logs/ criado')
+    }
+  } catch (err) {
+    issues.push(`Erro logs/: ${err.message}`)
+  }
+
+  // Send alert if issues found
+  if (issues.length > 0) {
+    const alertMsg =
+      `[HEALTH ALERT] <b>Bot-X-Posts V2</b>\n\n` +
+      `<b>Problemas detectados:</b>\n` +
+      issues.map(i => `- ${i}`).join('\n') +
+      `\n\n<i>Verificacao: ${now}</i>`
+
+    try {
+      await sendNotification(alertMsg)
+      console.log('   [ALERT] Notificacao enviada no Telegram')
+    } catch (err) {
+      console.error('   [FAIL] Erro ao enviar alerta:', err.message)
+    }
+  } else {
+    console.log('   [OK] Todos os checks passaram')
+  }
+
+  return { success: issues.length === 0, issues }
+}
+
+// ==================== SCHEDULE MANAGEMENT ====================
+
+// All topics for each slot
+const TOPICS = ['crypto', 'investing', 'ai', 'vibeCoding']
+const LANGUAGES = ['en', 'pt-BR']
 
 // Daily learning at 23:59 (analyze posts, adjust weights, send report)
 const DAILY_LEARNING = {
@@ -76,16 +281,24 @@ const DAILY_LEARNING = {
   desc: '23:59 Daily Learning'
 }
 
-// All topics for each slot
-const TOPICS = ['crypto', 'investing', 'ai', 'vibeCoding']
-const LANGUAGES = ['en', 'pt-BR']
+// Health check at 00:01
+const HEALTH_CHECK = {
+  cron: '1 0 * * *',
+  desc: '00:01 Health Check'
+}
+
+// Initialize schedule
+let scheduleInfo = loadSchedule()
+currentSchedule = scheduleInfo.schedule
 
 console.log('[BOT] Bot-X-Posts Daemon V2 (Multi-Source Bilingual + Learning)')
 console.log('='.repeat(60))
-console.log(`[SCHEDULE] Horarios: ${SCHEDULE.map(s => s.hour + 'h').join(', ')} (Daily)`)
+console.log(`[SCHEDULE] Horarios: ${currentSchedule.map(s => s.hour + 'h').join(', ')} (${scheduleInfo.source})`)
+console.log(`[SCHEDULE] Razao: ${scheduleInfo.reason}`)
 console.log(`[TOPICS] Topics: ${TOPICS.join(', ')}`)
 console.log(`[LANGUAGES] Languages: ${LANGUAGES.join(', ')}`)
-console.log(`[POSTS] Total: ${SCHEDULE.length * TOPICS.length * LANGUAGES.length} posts/dia`)
+console.log(`[POSTS] Total: ${currentSchedule.length * TOPICS.length * LANGUAGES.length} posts/dia`)
+console.log(`[HEALTH] Health check: 00:01`)
 console.log(`[LEARNING] Daily learning cycle: 23:59`)
 console.log(`[START] Iniciado em: ${new Date().toLocaleString('pt-BR', { timeZone: TIMEZONE })}`)
 console.log('='.repeat(60))
@@ -156,25 +369,69 @@ async function runDailyLearning() {
   child.on('exit', (code) => {
     if (code === 0) {
       console.log('[OK] Learning cycle finalizado com sucesso')
+
+      // Check if schedule should be updated after learning
+      checkScheduleUpdate()
     } else {
       console.log(`[WARN] Learning cycle finalizado com codigo ${code}`)
     }
   })
 }
 
+/**
+ * Check if schedule should be updated based on new learnings
+ */
+function checkScheduleUpdate() {
+  const newScheduleInfo = loadSchedule()
+  const newHours = newScheduleInfo.schedule.map(s => s.hour).sort((a, b) => a - b)
+  const currentHours = currentSchedule.map(s => s.hour).sort((a, b) => a - b)
+
+  // Check if hours changed
+  const hoursChanged = JSON.stringify(newHours) !== JSON.stringify(currentHours)
+
+  if (hoursChanged) {
+    console.log('\n[SCHEDULE] Horarios atualizados pelo learning!')
+    console.log(`   Anterior: ${currentHours.map(h => h + 'h').join(', ')}`)
+    console.log(`   Novo: ${newHours.map(h => h + 'h').join(', ')}`)
+    console.log(`   Razao: ${newScheduleInfo.reason}`)
+
+    // Update schedule (will take effect on next daemon restart)
+    // Note: We don't reschedule live cron jobs to avoid complexity
+    // Changes will apply when daemon restarts
+
+    sendNotification(
+      `[SCHEDULE] <b>Horarios Atualizados</b>\n\n` +
+      `Anterior: ${currentHours.map(h => h + 'h').join(', ')}\n` +
+      `Novo: ${newHours.map(h => h + 'h').join(', ')}\n\n` +
+      `<i>Mudanca aplicada no proximo restart do daemon.</i>`
+    ).catch(err => console.error('Erro ao notificar mudanca de horario:', err.message))
+  }
+}
+
 // ==================== CRON JOBS ====================
 
 // Schedule post jobs
-SCHEDULE.forEach(({ hour, cron: cronExpr, desc }) => {
-  cron.schedule(cronExpr, () => {
+currentSchedule.forEach(({ hour, cron: cronExpr, desc }) => {
+  const job = cron.schedule(cronExpr, () => {
     console.log(`\n[CRON] Cron disparado: ${hour}h`)
     runBot()
   }, {
     timezone: TIMEZONE
   })
 
+  activeJobs.push({ hour, job })
   console.log(`   [OK] Agendado: ${desc}`)
 })
+
+// Schedule health check at 00:01
+cron.schedule(HEALTH_CHECK.cron, () => {
+  console.log(`\n[CRON] Cron disparado: Health Check`)
+  runHealthCheck()
+}, {
+  timezone: TIMEZONE
+})
+
+console.log(`   [OK] Agendado: ${HEALTH_CHECK.desc}`)
 
 // Schedule daily learning at 23:59
 cron.schedule(DAILY_LEARNING.cron, () => {
@@ -189,10 +446,10 @@ console.log(`   [OK] Agendado: ${DAILY_LEARNING.desc}`)
 // ==================== INTERACTIVE COMMANDS ====================
 
 console.log('\n[RUNNING] Daemon V2 rodando. Ctrl+C para parar.')
-console.log('   Comandos: run, learn (l), status (s), help (h)\n')
+console.log('   Comandos: run, learn (l), health (h), schedule (sc), status (s), help (?)\n')
 
 process.stdin.setEncoding('utf8')
-process.stdin.on('data', (input) => {
+process.stdin.on('data', async (input) => {
   const cmd = input.trim().toLowerCase()
 
   if (cmd === 'run' || cmd === 'r') {
@@ -201,20 +458,42 @@ process.stdin.on('data', (input) => {
   } else if (cmd === 'learn' || cmd === 'l') {
     console.log('[MANUAL] Executando ciclo de aprendizado manualmente...')
     runDailyLearning()
+  } else if (cmd === 'health' || cmd === 'h') {
+    console.log('[MANUAL] Executando health check manualmente...')
+    await runHealthCheck()
+  } else if (cmd === 'schedule' || cmd === 'sc') {
+    // Show current schedule with details
+    console.log('\n[SCHEDULE] Horarios dinamicos atuais:')
+    console.log(`   Fonte: ${scheduleInfo.source}`)
+    console.log(`   Razao: ${scheduleInfo.reason}`)
+    console.log('\n   Horarios:')
+    currentSchedule.forEach(({ hour }) => {
+      const detail = scheduleInfo.details?.find(d => d.hour === hour)
+      if (detail) {
+        console.log(`   ${hour}h: score ${Math.round(detail.score)}, engagement ${Math.round(detail.avgEngagement)}, ${detail.count} posts`)
+      } else {
+        console.log(`   ${hour}h: (default)`)
+      }
+    })
+    console.log(`\n   Default hours (fallback): ${DEFAULT_HOURS.map(h => h + 'h').join(', ')}`)
+    console.log(`   Min posts para dinamico: ${MIN_POSTS_FOR_DYNAMIC_SCHEDULE}`)
   } else if (cmd === 'status' || cmd === 's') {
     console.log(`[TIME] Hora atual: ${new Date().toLocaleString('pt-BR', { timeZone: TIMEZONE })}`)
-    console.log(`[SCHEDULE] Proximos horarios:`)
-    SCHEDULE.forEach(({ hour, desc }) => {
+    console.log(`[SCHEDULE] Horarios (${scheduleInfo.source}):`)
+    currentSchedule.forEach(({ hour }) => {
       console.log(`   ${hour}h: ${TOPICS.length * LANGUAGES.length} posts`)
     })
+    console.log(`   00:01: Health Check`)
     console.log(`   23:59: Daily Learning (analyze + adjust + report)`)
-    console.log(`[TOTAL] Total diario: ${SCHEDULE.length * TOPICS.length * LANGUAGES.length} posts + 1 learning report`)
-  } else if (cmd === 'help' || cmd === 'h') {
+    console.log(`[TOTAL] Total diario: ${currentSchedule.length * TOPICS.length * LANGUAGES.length} posts + health check + learning report`)
+  } else if (cmd === 'help' || cmd === '?') {
     console.log('Comandos:')
-    console.log('  run (r)   - Executa ciclo de postagem')
-    console.log('  learn (l) - Executa ciclo de aprendizado')
-    console.log('  status (s) - Mostra horarios agendados')
-    console.log('  help (h)   - Este menu')
+    console.log('  run (r)      - Executa ciclo de postagem')
+    console.log('  learn (l)    - Executa ciclo de aprendizado')
+    console.log('  health (h)   - Executa health check')
+    console.log('  schedule (sc) - Mostra horarios dinamicos detalhados')
+    console.log('  status (s)   - Mostra horarios agendados')
+    console.log('  help (?)     - Este menu')
   }
 })
 
@@ -232,10 +511,11 @@ process.on('SIGINT', async () => {
 
 sendNotification(
   `[ONLINE] <b>Bot-X-Posts V2</b> iniciado!\n\n` +
-  `[SCHEDULE] Horarios: ${SCHEDULE.map(s => s.hour + 'h').join(', ')} (Daily)\n` +
+  `[SCHEDULE] Horarios: ${currentSchedule.map(s => s.hour + 'h').join(', ')} (${scheduleInfo.source})\n` +
   `[TOPICS] Topics: ${TOPICS.join(', ')}\n` +
   `[LANG] Languages: EN + PT-BR\n` +
-  `[POSTS] ${SCHEDULE.length * TOPICS.length * LANGUAGES.length} posts/dia\n` +
+  `[POSTS] ${currentSchedule.length * TOPICS.length * LANGUAGES.length} posts/dia\n` +
+  `[HEALTH] Health check: 00:01\n` +
   `[LEARNING] Self-learning at 23:59\n` +
   `[TIMEZONE] Timezone: ${TIMEZONE}`
 )

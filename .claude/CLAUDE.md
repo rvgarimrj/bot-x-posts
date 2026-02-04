@@ -434,6 +434,223 @@ npm run learn            # Ciclo completo de aprendizado
 cat data/learnings.json  # Ver pesos atuais
 ```
 
+## Sistema de Auto-Aprendizado V2
+
+Sistema inteligente que aprende automaticamente quais combinacoes de HOOK + STYLE + TOPIC + HOUR geram mais engajamento, ajustando pesos dinamicamente para atingir metas de monetizacao.
+
+### Metas do Projeto (Creator Studio)
+
+| Programa | Impressoes | Followers | Deadline | Meta Diaria |
+|----------|------------|-----------|----------|-------------|
+| **Partilha de Receitas** | 5M | 500 premium | 90 dias | ~55k impressoes/dia |
+| **Subscricoes** | 5M | 2,000 verified | 90 dias | ~55k impressoes/dia |
+
+**Calculo da meta diaria:** 5,000,000 / 90 dias = ~55,556 impressoes/dia
+
+### Ciclo Diario Automatico
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    CICLO DIARIO 24H                         │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  00:01  Health Check                                        │
+│         - Verifica Chrome conectado                         │
+│         - Verifica daemon rodando                           │
+│         - Alerta no Telegram se problema                    │
+│                                                             │
+│  00:05  Restart Diario do Daemon                            │
+│         - Limpa memoria                                     │
+│         - Recarrega configuracoes                           │
+│         - Aplica novos pesos aprendidos                     │
+│                                                             │
+│  08:00-20:00  Posts com Horarios Dinamicos                  │
+│         - Baseado em engagement-hours.json                  │
+│         - Mais posts nos horarios de alto engagement        │
+│         - Menos posts nos horarios de baixo engagement      │
+│                                                             │
+│  23:59  Analise + Learning + Relatorio                      │
+│         - Coleta metricas do dia                            │
+│         - Compara com metas                                 │
+│         - Ajusta pesos para proximo dia                     │
+│         - Envia relatorio no Telegram                       │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Sistema de Aprendizado
+
+O learning engine rastreia e ajusta pesos para 5 dimensoes:
+
+| Dimensao | Descricao | Exemplo de Ajuste |
+|----------|-----------|-------------------|
+| **Hooks** | Framework de abertura | `extreme: 1.3` (mais usado) |
+| **Styles** | Tom do post | `hot_take: 1.2` (engaja mais) |
+| **Topics** | Tema do conteudo | `crypto: 1.4` (trending) |
+| **Hours** | Horario de postagem | `18h: 1.5` (pico de engagement) |
+| **Experiments** | A/B tests | `emoji_start: 0.8` (nao funcionou) |
+
+### Ajuste Automatico de Pesos
+
+```javascript
+// Formula de ajuste
+newWeight = currentWeight * (1 + (engagementRate - avgEngagement) * learningRate)
+
+// Limites
+MIN_WEIGHT = 0.3  // Nunca para de usar completamente
+MAX_WEIGHT = 2.0  // Nunca domina completamente
+LEARNING_RATE = 0.1  // Ajustes graduais
+```
+
+### Arquivos do Sistema V2
+
+| Arquivo | Funcao |
+|---------|--------|
+| `src/engagement-analyzer.js` | Analisa melhores horarios baseado em dados reais |
+| `src/telegram-report.js` | Formata e envia relatorios diarios |
+| `scripts/daily-learning.js` | Executa ciclo completo de aprendizado |
+| `scripts/daemon-manager.js` | Gerencia start/stop/restart do daemon |
+| `data/GOALS.md` | Metas e acompanhamento de progresso |
+| `data/engagement-hours.json` | Pesos por horario baseado em engagement |
+| `data/learnings.json` | Todos os pesos aprendidos |
+| `logs/daily-reports/` | Historico de relatorios diarios |
+
+### Estrutura do engagement-hours.json
+
+```json
+{
+  "hours": {
+    "8": { "weight": 1.0, "avgEngagement": 450, "samples": 28 },
+    "10": { "weight": 1.2, "avgEngagement": 580, "samples": 28 },
+    "12": { "weight": 0.9, "avgEngagement": 380, "samples": 28 },
+    "14": { "weight": 1.1, "avgEngagement": 520, "samples": 28 },
+    "16": { "weight": 1.3, "avgEngagement": 650, "samples": 28 },
+    "18": { "weight": 1.5, "avgEngagement": 820, "samples": 28 },
+    "20": { "weight": 1.4, "avgEngagement": 750, "samples": 28 }
+  },
+  "lastUpdated": "2026-02-03T23:59:00Z"
+}
+```
+
+### Estrutura do learnings.json
+
+```json
+{
+  "hooks": {
+    "extreme": { "weight": 1.3, "uses": 45, "totalEngagement": 12500 },
+    "aida": { "weight": 1.1, "uses": 38, "totalEngagement": 9200 },
+    "pas": { "weight": 0.9, "uses": 42, "totalEngagement": 8100 }
+  },
+  "styles": {
+    "hot_take": { "weight": 1.4, "uses": 52, "totalEngagement": 15800 },
+    "sarcasm": { "weight": 1.2, "uses": 35, "totalEngagement": 9500 }
+  },
+  "topics": {
+    "crypto": { "weight": 1.3, "uses": 120, "totalEngagement": 45000 },
+    "ai": { "weight": 1.1, "uses": 120, "totalEngagement": 38000 }
+  },
+  "lastLearning": "2026-02-03T23:59:00Z",
+  "totalDays": 15
+}
+```
+
+### Comandos V2
+
+```bash
+# Ciclo completo de aprendizado (coleta + analise + ajuste)
+npm run learn
+
+# Apenas coleta de metricas
+npm run collect
+
+# Health check do sistema
+npm run health
+
+# Reinicia daemon aplicando novos pesos
+npm run restart
+
+# Ver relatorio do dia
+npm run report
+
+# Ver progresso vs metas
+npm run goals
+
+# Testar analise sem salvar
+npm run learn:dry
+```
+
+### Metricas Rastreadas
+
+| Metrica | Fonte | Frequencia | Meta |
+|---------|-------|------------|------|
+| Impressoes/dia | X Analytics | Diario | 55k/dia |
+| Engagement rate | Calculado | Por post | >2% |
+| Premium followers | X Creator Studio | Diario | 500 em 90d |
+| Verified followers | X Creator Studio | Diario | 2,000 em 90d |
+| Hook performance | learnings.json | Diario | Top 3 identificados |
+| Style performance | learnings.json | Diario | Top 3 identificados |
+| Best hours | engagement-hours.json | Semanal | Top 3 horarios |
+
+### Relatorio Diario no Telegram
+
+```
+=== RELATORIO DIARIO (02/02/2026) ===
+
+IMPRESSOES: 62,450 / 55,556 meta (+12.4%)
+ENGAJAMENTO: 2.8% (media: 2.1%)
+FOLLOWERS: +12 (8 premium, 4 verified)
+
+TOP HOOKS HOJE:
+1. extreme (1,850 eng/post)
+2. bab (1,420 eng/post)
+3. results (1,380 eng/post)
+
+TOP STYLES HOJE:
+1. hot_take (2,100 eng/post)
+2. contrarian (1,650 eng/post)
+3. personal (1,400 eng/post)
+
+TOP HORARIOS:
+1. 18h (820 avg engagement)
+2. 20h (750 avg engagement)
+3. 16h (650 avg engagement)
+
+PROGRESSO METAS:
+- Impressoes: 842k / 5M (16.8%) - 12 dias
+- Premium: 68 / 500 (13.6%)
+- Verified: 245 / 2,000 (12.3%)
+
+AJUSTES APLICADOS:
+- extreme: 1.2 -> 1.3 (+8.3%)
+- hot_take: 1.3 -> 1.4 (+7.7%)
+- 18h: 1.4 -> 1.5 (+7.1%)
+```
+
+### Fluxo do Aprendizado V2
+
+```
+┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│   Dia N: Posts   │────>│  23:59: Coleta   │────>│  Analise Claude  │
+│  com pesos atuais│     │    metricas      │     │   identifica     │
+└──────────────────┘     └──────────────────┘     │   padroes        │
+                                                   └────────┬─────────┘
+                                                            │
+                                                            ▼
+┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│ Dia N+1: Posts   │<────│ 00:05: Daemon    │<────│ Ajuste de Pesos  │
+│ com novos pesos  │     │    restart       │     │   automatico     │
+└──────────────────┘     └──────────────────┘     └──────────────────┘
+```
+
+### Integracao com Sistema V1
+
+O sistema V2 e **retro-compativel** com V1:
+
+- Se `data/learnings.json` nao existir, usa pesos iguais (1.0)
+- Se `data/engagement-hours.json` nao existir, usa horarios fixos
+- Comandos V1 (`npm run start`, `npm run analyze`) continuam funcionando
+- Daemon V1 pode coexistir com V2 (mas recomenda-se usar apenas V2)
+
 ## Notas de Desenvolvimento
 
 - Posts max 500 chars
@@ -475,6 +692,7 @@ Sempre logar no puppeteer-post.js:
 3. Se texto < 80% do esperado, avisar antes de postar
 
 ## Historico de Commits
+- **2026-02-03 20:09** [`3cce8fb`] Document self-learning system in CLAUDE.md (.claude/CLAUDE.md)
 - **2026-02-03 20:09** [`1ec2efe`] Add Hook Frameworks + Self-Learning Analytics System (.claude/CLAUDE.md,package.json,scripts/auto-post-v2.js,scripts/cron-daemon-v2.js,scripts/daily-analysis.js)
 - **2026-02-03** Document Hook Frameworks: 8 styles x 8 hooks = 64 combinations (.claude/CLAUDE.md)
 - **2026-02-02 19:13** [`5b070e7`] Document lessons learned: clipboard for text, sync vs async, hot reload (.claude/CLAUDE.md)

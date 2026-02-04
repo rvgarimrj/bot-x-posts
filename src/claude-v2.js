@@ -5,6 +5,7 @@
  * Different system prompts for each language
  *
  * Now integrates with Learning Engine for weighted selection
+ * Includes LANGUAGE_EXPERIMENTS for A/B testing different writing styles
  */
 
 import Anthropic from '@anthropic-ai/sdk'
@@ -264,6 +265,78 @@ const HOOK_FRAMEWORKS = {
   ]
 }
 
+// ==================== LANGUAGE EXPERIMENTS (A/B TESTING) ====================
+
+// Experiments for testing different writing approaches
+// Each experiment has different constraints and instructions
+// Learning engine will track which experiments perform best
+const LANGUAGE_EXPERIMENTS = {
+  'en': [
+    {
+      name: 'ultra_short',
+      instruction: 'Maximum 100 chars. Punchy. No fluff. Every word must earn its place.',
+      maxChars: 100,
+      examples: ['btc ripping. you in or watching?', 'cursor > copilot. fight me.', 'shipped 3 PRs today. AI did half.']
+    },
+    {
+      name: 'question_first',
+      instruction: 'Start with a question that hooks. Then answer briefly. Question must be genuinely interesting.',
+      maxChars: 200,
+      examples: ['why do devs still debug manually? cursor does it in 5min', 'whats the point of HODL if youre not DCAing?']
+    },
+    {
+      name: 'numbers_lead',
+      instruction: 'Lead with a specific number or stat. Makes it concrete and credible. No vague claims.',
+      maxChars: 200,
+      examples: ['72% of my PRs this week were AI-assisted. not exaggerating', '$83k btc and fear index at 20. numbers dont lie']
+    },
+    {
+      name: 'contrarian_shock',
+      instruction: 'Start with something that sounds wrong but is true. Challenges assumptions. Makes people stop scrolling.',
+      maxChars: 200,
+      examples: ['copilot made me worse at coding. heres why thats good', 'bear markets are when millionaires are made. everyone forgets']
+    },
+    {
+      name: 'meme_speak',
+      instruction: 'Use meme language naturally. "fr fr", "no cap", "lowkey", "its giving". Dont force it.',
+      maxChars: 180,
+      examples: ['no cap claude code is lowkey goated rn', 'btc fr fr testing support again. we been here before']
+    }
+  ],
+  'pt-BR': [
+    {
+      name: 'ultra_curto',
+      instruction: 'Maximo 100 chars. Direto. Sem enrolacao. Cada palavra tem que valer.',
+      maxChars: 100,
+      examples: ['btc subindo. tu ta dentro ou olhando?', 'cursor > copilot. briga comigo.', 'entreguei 3 PRs hj. AI fez metade.']
+    },
+    {
+      name: 'pergunta_primeiro',
+      instruction: 'Comeca com pergunta que prende. Depois responde rapido. Pergunta tem que ser interessante de verdade.',
+      maxChars: 200,
+      examples: ['pq dev ainda debuga manual? cursor faz em 5min', 'qual sentido de HODL se nao ta DCAando?']
+    },
+    {
+      name: 'numero_na_frente',
+      instruction: 'Comeca com numero especifico. Concretiza e da credibilidade. Nada de afirmacao vaga.',
+      maxChars: 200,
+      examples: ['72% dos meus PRs essa semana foram com AI. sem exagero', 'btc em $83k e fear index em 20. numeros nao mentem']
+    },
+    {
+      name: 'contra_senso',
+      instruction: 'Comeca com algo que parece errado mas e verdade. Desafia suposicoes. Faz parar o scroll.',
+      maxChars: 200,
+      examples: ['copilot me fez codar pior. e isso e bom', 'bear market e quando milionario e feito. todo mundo esquece']
+    },
+    {
+      name: 'girias',
+      instruction: 'Usa girias naturalmente. "mano", "real", "bora", "sinistro", "da hora". Nao forca.',
+      maxChars: 180,
+      examples: ['mano claude code ta sinistro real', 'btc testando suporte dnv. bora ver se segura']
+    }
+  ]
+}
+
 // ==================== SELECTION FUNCTIONS ====================
 
 /**
@@ -296,6 +369,52 @@ function selectHook(language) {
   return hooks[Math.floor(Math.random() * hooks.length)]
 }
 
+/**
+ * Select language experiment using learning engine weights (or random if not available)
+ * @param {string} language - Language code (en or pt-BR)
+ * @returns {Object|null} Selected experiment or null if experiments disabled
+ */
+function selectLanguageExperiment(language) {
+  const experiments = LANGUAGE_EXPERIMENTS[language] || LANGUAGE_EXPERIMENTS['en']
+
+  // 30% chance to run an experiment (allows comparison with baseline)
+  // This ensures we still generate "normal" posts for comparison
+  if (Math.random() > 0.30) {
+    return null
+  }
+
+  const experimentNames = experiments.map(e => e.name)
+
+  if (learningEngine) {
+    try {
+      const selectedName = learningEngine.weightedSelect(experimentNames, 'experiments')
+      return experiments.find(e => e.name === selectedName) || experiments[0]
+    } catch (err) {
+      // Experiments category may not exist in learnings yet, fall back to random
+      return experiments[Math.floor(Math.random() * experiments.length)]
+    }
+  }
+
+  return experiments[Math.floor(Math.random() * experiments.length)]
+}
+
+/**
+ * Get all experiment names for a language (useful for learning engine initialization)
+ * @param {string} language - Language code
+ * @returns {string[]} Array of experiment names
+ */
+export function getExperimentNames(language = 'en') {
+  const experiments = LANGUAGE_EXPERIMENTS[language] || LANGUAGE_EXPERIMENTS['en']
+  return experiments.map(e => e.name)
+}
+
+/**
+ * Get all experiments (useful for documentation/debugging)
+ */
+export function getAllExperiments() {
+  return LANGUAGE_EXPERIMENTS
+}
+
 // ==================== POST GENERATION ====================
 
 /**
@@ -319,7 +438,42 @@ export async function generatePost(topic, newsContext, angle, language = 'pt-BR'
   // Select HOOK using learning weights
   const selectedHook = selectHook(language)
 
-  console.log(`      [style: ${selectedStyle.name} + hook: ${selectedHook.name}]`)
+  // Select EXPERIMENT (optional - may return null)
+  const selectedExperiment = selectLanguageExperiment(language)
+
+  // Log selection info
+  let logMsg = `      [style: ${selectedStyle.name} + hook: ${selectedHook.name}`
+  if (selectedExperiment) {
+    logMsg += ` + experiment: ${selectedExperiment.name}`
+  }
+  logMsg += ']'
+  console.log(logMsg)
+
+  // Build experiment instructions if applicable
+  let experimentInstructions = ''
+  let maxCharsOverride = null
+
+  if (selectedExperiment) {
+    const expExamples = selectedExperiment.examples
+      ? `\nEXPERIMENT EXAMPLES: ${selectedExperiment.examples.join(' | ')}`
+      : ''
+
+    experimentInstructions = language === 'en'
+      ? `\n\n=== LANGUAGE EXPERIMENT: ${selectedExperiment.name.toUpperCase()} ===
+${selectedExperiment.instruction}${expExamples}
+IMPORTANT: This experiment takes PRIORITY over normal length guidelines.`
+      : `\n\n=== EXPERIMENTO DE LINGUAGEM: ${selectedExperiment.name.toUpperCase()} ===
+${selectedExperiment.instruction}${expExamples}
+IMPORTANTE: Este experimento tem PRIORIDADE sobre as guidelines de tamanho normal.`
+
+    maxCharsOverride = selectedExperiment.maxChars
+  }
+
+  // Determine character limits
+  const charLimit = maxCharsOverride || (language === 'en' ? '120-250' : '120-250')
+  const charInstruction = typeof charLimit === 'number'
+    ? `- MAXIMUM ${charLimit} chars (experiment constraint)`
+    : `- ${charLimit} chars`
 
   const userPrompt = language === 'en'
     ? `TOPIC: ${topic}
@@ -332,7 +486,7 @@ ANGLE: ${angle}
 === YOUR ASSIGNMENT ===
 TONE/STYLE: ${selectedStyle.instruction}
 HOOK FRAMEWORK: ${selectedHook.instruction}
-HOOK EXAMPLES: ${selectedHook.examples.join(' | ')}
+HOOK EXAMPLES: ${selectedHook.examples.join(' | ')}${experimentInstructions}
 
 Write ONE post combining this TONE with this HOOK structure.
 
@@ -343,7 +497,7 @@ CRITICAL:
 - ONE point only
 - NEVER use banned words
 - 0-2 hashtags
-- 120-250 chars
+${charInstruction}
 
 Just the post text.`
     : `TOPICO: ${topic}
@@ -356,7 +510,7 @@ ANGULO: ${angle}
 === SUA TAREFA ===
 TOM/ESTILO: ${selectedStyle.instruction}
 FRAMEWORK DE HOOK: ${selectedHook.instruction}
-EXEMPLOS DE HOOK: ${selectedHook.examples.join(' | ')}
+EXEMPLOS DE HOOK: ${selectedHook.examples.join(' | ')}${experimentInstructions}
 
 Escreva UM post combinando esse TOM com essa estrutura de HOOK.
 
@@ -367,7 +521,7 @@ CRITICO:
 - UM ponto so
 - NUNCA use palavras proibidas
 - 0-2 hashtags
-- 120-250 chars
+${charInstruction}
 
 So o texto do post.`
 
@@ -389,12 +543,20 @@ So o texto do post.`
     return generatePost(topic, newsContext, angle, language, retries - 1)
   }
 
+  // Additional validation for experiment char limits
+  if (selectedExperiment && selectedExperiment.maxChars && post.length > selectedExperiment.maxChars + 20 && retries > 0) {
+    console.log(`   Post excede limite do experimento (${post.length} > ${selectedExperiment.maxChars}), regenerando...`)
+    return generatePost(topic, newsContext, angle, language, retries - 1)
+  }
+
   // Return object with post text and metadata for learning engine
   return {
     text: post,
     _metadata: {
       hook: selectedHook.name,
       style: selectedStyle.name,
+      experiment: selectedExperiment ? selectedExperiment.name : null,
+      experimentMaxChars: selectedExperiment ? selectedExperiment.maxChars : null,
       topic,
       language,
       chars: post.length,
@@ -443,10 +605,11 @@ export async function generateAllPosts(curated, topics, formatForPrompt) {
           sentiment: data.sentiment,
           chars: postText.length,
           hook: metadata.hook,
-          style: metadata.style
+          style: metadata.style,
+          experiment: metadata.experiment || null
         })
       } catch (err) {
-        console.log(`   ⚠️ Erro em ${topic} (${language}): ${err.message}`)
+        console.log(`   Erro em ${topic} (${language}): ${err.message}`)
       }
     }
   }
@@ -473,7 +636,8 @@ export async function generateMultiplePosts(topic, newsContext, angles, language
       post: postText,
       language,
       hook: metadata.hook,
-      style: metadata.style
+      style: metadata.style,
+      experiment: metadata.experiment || null
     })
   }
   return posts
@@ -499,6 +663,12 @@ export function getLearningStats() {
       .sort(([, a], [, b]) => b - a)
       .slice(0, 3)
       .map(([name, weight]) => ({ name, weight })),
+    topExperiments: learnings.weights.experiments
+      ? Object.entries(learnings.weights.experiments)
+          .sort(([, a], [, b]) => b - a)
+          .slice(0, 3)
+          .map(([name, weight]) => ({ name, weight }))
+      : [],
     lastUpdated: learnings.lastUpdated
   }
 }
@@ -507,5 +677,7 @@ export default {
   generatePost,
   generateAllPosts,
   generateMultiplePosts,
-  getLearningStats
+  getLearningStats,
+  getExperimentNames,
+  getAllExperiments
 }

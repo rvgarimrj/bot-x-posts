@@ -2,9 +2,10 @@
  * Learning Engine for Bot-X-Posts
  *
  * Self-improving system that analyzes engagement and adjusts posting strategy.
- * Tracks HOOK_FRAMEWORKS, POST_STYLES, topics, hours, and languages.
+ * Tracks HOOK_FRAMEWORKS, POST_STYLES, topics, hours, languages, and experiments.
  *
- * Exports: analyzePosts(), adjustWeights(), generateDailyReport()
+ * Exports: analyzePosts(), adjustWeights(), generateDailyReport(), getTopPerformers(),
+ *          generateInsights(), getDailyComparison()
  */
 
 import { TwitterApi } from 'twitter-api-v2'
@@ -55,6 +56,32 @@ const LANGUAGES = ['en', 'pt-BR']
 // Posting hours (8-20, every 2h)
 const HOURS = [8, 10, 12, 14, 16, 18, 20]
 
+// Language experiments from claude-v2.js (NEW A/B testing system)
+// EN experiments
+const EXPERIMENTS_EN = [
+  'ultra_short',       // Max 100 chars, punchy
+  'question_first',    // Start with a hook question
+  'numbers_lead',      // Lead with specific number/stat
+  'contrarian_shock',  // Start with something that sounds wrong but is true
+  'meme_speak'         // Use meme language (fr fr, no cap, lowkey)
+]
+
+// PT-BR experiments
+const EXPERIMENTS_PT_BR = [
+  'ultra_curto',        // Max 100 chars
+  'pergunta_primeiro',  // Start with question
+  'numero_na_frente',   // Lead with number
+  'contra_senso',       // Contrarian opener
+  'girias'              // Use slang naturally
+]
+
+// Combined for scoring (all unique experiment names)
+const ALL_EXPERIMENTS = [...new Set([...EXPERIMENTS_EN, ...EXPERIMENTS_PT_BR])]
+
+// Timezone offsets from UTC
+const TIMEZONE_BRAZIL = -3  // BRT (Sao Paulo)
+const TIMEZONE_USA_EST = -5  // EST (New York)
+
 // ==================== DATA STRUCTURES ====================
 
 /**
@@ -62,7 +89,7 @@ const HOURS = [8, 10, 12, 14, 16, 18, 20]
  */
 function getDefaultLearnings() {
   return {
-    version: 2,
+    version: 4,  // Bumped for new experiments
     lastUpdated: new Date().toISOString(),
     totalPostsAnalyzed: 0,
     totalImpressions: 0,
@@ -73,7 +100,10 @@ function getDefaultLearnings() {
       styles: Object.fromEntries(POST_STYLES.map(s => [s, { score: 50, count: 0, avgEngagement: 0, avgImpressions: 0 }])),
       topics: Object.fromEntries(TOPICS.map(t => [t, { score: 50, count: 0, avgEngagement: 0, avgImpressions: 0 }])),
       hours: Object.fromEntries(HOURS.map(h => [h, { score: 50, count: 0, avgEngagement: 0, avgImpressions: 0 }])),
-      languages: Object.fromEntries(LANGUAGES.map(l => [l, { score: 50, count: 0, avgEngagement: 0, avgImpressions: 0 }]))
+      languages: Object.fromEntries(LANGUAGES.map(l => [l, { score: 50, count: 0, avgEngagement: 0, avgImpressions: 0 }])),
+      experiments: Object.fromEntries(ALL_EXPERIMENTS.map(e => [e, { score: 50, count: 0, avgEngagement: 0, avgImpressions: 0 }])),
+      hoursBrazil: Object.fromEntries(HOURS.map(h => [h, { score: 50, count: 0, avgEngagement: 0, avgImpressions: 0 }])),
+      hoursUSA: Object.fromEntries(HOURS.map(h => [h, { score: 50, count: 0, avgEngagement: 0, avgImpressions: 0 }]))
     },
 
     // Best performing combinations
@@ -85,7 +115,8 @@ function getDefaultLearnings() {
       styles: Object.fromEntries(POST_STYLES.map(s => [s, 1.0])),
       topics: Object.fromEntries(TOPICS.map(t => [t, 1.0])),
       hours: Object.fromEntries(HOURS.map(h => [h, 1.0])),
-      languages: Object.fromEntries(LANGUAGES.map(l => [l, 1.0]))
+      languages: Object.fromEntries(LANGUAGES.map(l => [l, 1.0])),
+      experiments: Object.fromEntries(ALL_EXPERIMENTS.map(e => [e, 1.0]))
     },
 
     // Daily metrics history
@@ -128,14 +159,18 @@ function loadLearnings() {
           styles: { ...defaults.scores.styles, ...data.scores?.styles },
           topics: { ...defaults.scores.topics, ...data.scores?.topics },
           hours: { ...defaults.scores.hours, ...data.scores?.hours },
-          languages: { ...defaults.scores.languages, ...data.scores?.languages }
+          languages: { ...defaults.scores.languages, ...data.scores?.languages },
+          experiments: { ...defaults.scores.experiments, ...data.scores?.experiments },
+          hoursBrazil: { ...defaults.scores.hoursBrazil, ...data.scores?.hoursBrazil },
+          hoursUSA: { ...defaults.scores.hoursUSA, ...data.scores?.hoursUSA }
         },
         weights: {
           hooks: { ...defaults.weights.hooks, ...data.weights?.hooks },
           styles: { ...defaults.weights.styles, ...data.weights?.styles },
           topics: { ...defaults.weights.topics, ...data.weights?.topics },
           hours: { ...defaults.weights.hours, ...data.weights?.hours },
-          languages: { ...defaults.weights.languages, ...data.weights?.languages }
+          languages: { ...defaults.weights.languages, ...data.weights?.languages },
+          experiments: { ...defaults.weights.experiments, ...data.weights?.experiments }
         }
       }
     }
@@ -386,11 +421,82 @@ function detectLanguage(text) {
 }
 
 /**
+ * Detect language experiment from post text and language
+ * Matches the experiments defined in claude-v2.js LANGUAGE_EXPERIMENTS
+ */
+function detectExperiment(text, language = null) {
+  const lower = text.toLowerCase()
+  const len = text.length
+  const lang = language || detectLanguage(text)
+
+  // Ultra short / ultra_curto (under 100 chars)
+  if (len <= 100) {
+    return lang === 'pt-BR' ? 'ultra_curto' : 'ultra_short'
+  }
+
+  // Question first / pergunta_primeiro (starts with question word)
+  if (/^(why|what|how|when|where|who|pq|por que|qual|como|quando|onde|quem)/i.test(lower)) {
+    return lang === 'pt-BR' ? 'pergunta_primeiro' : 'question_first'
+  }
+
+  // Numbers lead / numero_na_frente (starts with number or stat)
+  if (/^(\d|[$%]|\$?\d)/i.test(text) || /^\d+[\s%]/.test(text)) {
+    return lang === 'pt-BR' ? 'numero_na_frente' : 'numbers_lead'
+  }
+
+  // Meme speak / girias (language-specific slang)
+  if (lang === 'en' && /(fr fr|no cap|lowkey|highkey|its giving|bussin|goated|ngl|tbh|idk)/i.test(lower)) {
+    return 'meme_speak'
+  }
+  if (lang === 'pt-BR' && /(mano|real|bora|sinistro|da hora|firmeza|suave|mermo|vei|tlgd)/i.test(lower)) {
+    return 'girias'
+  }
+
+  // Contrarian shock / contra_senso (starts with something that sounds wrong)
+  // Detect by negative/contrarian opener
+  const first50 = lower.substring(0, 50)
+  if (/(actually|wrong|not|dont|shouldnt|never|nao|errado|nunca|contrary|opposite|unpopular)/i.test(first50)) {
+    return lang === 'pt-BR' ? 'contra_senso' : 'contrarian_shock'
+  }
+
+  return null  // No experiment detected (normal post)
+}
+
+/**
  * Extract hour from timestamp
  */
 function extractHour(timestamp) {
   const date = new Date(timestamp)
   return date.getHours()
+}
+
+/**
+ * Convert UTC hour to timezone-adjusted hour
+ * @param {Date} timestamp - UTC timestamp
+ * @param {number} tzOffset - Timezone offset in hours (e.g., -3 for Brazil)
+ * @returns {number} Hour in the target timezone (0-23)
+ */
+function convertToTimezone(timestamp, tzOffset) {
+  const date = new Date(timestamp)
+  const utcHour = date.getUTCHours()
+  let tzHour = utcHour + tzOffset
+
+  // Handle day wraparound
+  if (tzHour < 0) tzHour += 24
+  if (tzHour >= 24) tzHour -= 24
+
+  return tzHour
+}
+
+/**
+ * Round hour to nearest posting hour
+ */
+function roundToPostingHour(hour) {
+  const roundedHour = Math.round(hour / 2) * 2
+  // Clamp to valid posting hours
+  if (roundedHour < 8) return 8
+  if (roundedHour > 20) return 20
+  return roundedHour
 }
 
 // ==================== MAIN ANALYSIS FUNCTION ====================
@@ -422,6 +528,9 @@ export async function analyzePosts() {
     byTopic: {},
     byHour: {},
     byLanguage: {},
+    byExperiment: {},
+    byHourBrazil: {},
+    byHourUSA: {},
     combinations: []
   }
 
@@ -441,8 +550,15 @@ export async function analyzePosts() {
     const style = detectStyle(tweet.text)
     const topic = detectTopic(tweet.text)
     const language = detectLanguage(tweet.text)
+    const experiment = detectExperiment(tweet.text, language)
     const hour = extractHour(tweet.createdAt)
-    const roundedHour = Math.round(hour / 2) * 2  // Round to nearest posting hour
+    const roundedHour = roundToPostingHour(hour)
+
+    // Timezone-adjusted hours
+    const hourBrazil = convertToTimezone(tweet.createdAt, TIMEZONE_BRAZIL)
+    const hourUSA = convertToTimezone(tweet.createdAt, TIMEZONE_USA_EST)
+    const roundedHourBrazil = roundToPostingHour(hourBrazil)
+    const roundedHourUSA = roundToPostingHour(hourUSA)
 
     // Accumulate by hook
     if (hook !== 'unknown') {
@@ -477,7 +593,7 @@ export async function analyzePosts() {
       analysis.byTopic[topic].posts.push({ text: tweet.text, engagement, impressions })
     }
 
-    // Accumulate by hour
+    // Accumulate by hour (local/server time)
     if (HOURS.includes(roundedHour)) {
       if (!analysis.byHour[roundedHour]) {
         analysis.byHour[roundedHour] = { totalEngagement: 0, totalImpressions: 0, count: 0, posts: [] }
@@ -497,6 +613,39 @@ export async function analyzePosts() {
     analysis.byLanguage[language].count++
     analysis.byLanguage[language].posts.push({ text: tweet.text, engagement, impressions })
 
+    // Accumulate by experiment (if detected)
+    if (experiment) {
+      if (!analysis.byExperiment[experiment]) {
+        analysis.byExperiment[experiment] = { totalEngagement: 0, totalImpressions: 0, count: 0, posts: [] }
+      }
+      analysis.byExperiment[experiment].totalEngagement += engagement
+      analysis.byExperiment[experiment].totalImpressions += impressions
+      analysis.byExperiment[experiment].count++
+      analysis.byExperiment[experiment].posts.push({ text: tweet.text, engagement, impressions })
+    }
+
+    // Accumulate by Brazil hour
+    if (HOURS.includes(roundedHourBrazil)) {
+      if (!analysis.byHourBrazil[roundedHourBrazil]) {
+        analysis.byHourBrazil[roundedHourBrazil] = { totalEngagement: 0, totalImpressions: 0, count: 0, posts: [] }
+      }
+      analysis.byHourBrazil[roundedHourBrazil].totalEngagement += engagement
+      analysis.byHourBrazil[roundedHourBrazil].totalImpressions += impressions
+      analysis.byHourBrazil[roundedHourBrazil].count++
+      analysis.byHourBrazil[roundedHourBrazil].posts.push({ text: tweet.text, engagement, impressions })
+    }
+
+    // Accumulate by USA hour
+    if (HOURS.includes(roundedHourUSA)) {
+      if (!analysis.byHourUSA[roundedHourUSA]) {
+        analysis.byHourUSA[roundedHourUSA] = { totalEngagement: 0, totalImpressions: 0, count: 0, posts: [] }
+      }
+      analysis.byHourUSA[roundedHourUSA].totalEngagement += engagement
+      analysis.byHourUSA[roundedHourUSA].totalImpressions += impressions
+      analysis.byHourUSA[roundedHourUSA].count++
+      analysis.byHourUSA[roundedHourUSA].posts.push({ text: tweet.text, engagement, impressions })
+    }
+
     // Track combinations
     if (hook !== 'unknown' && style !== 'unknown' && topic !== 'unknown') {
       analysis.combinations.push({
@@ -504,7 +653,10 @@ export async function analyzePosts() {
         style,
         topic,
         language,
+        experiment,
         hour: roundedHour,
+        hourBrazil: roundedHourBrazil,
+        hourUSA: roundedHourUSA,
         engagement,
         impressions,
         engagementRate,
@@ -523,7 +675,10 @@ export async function analyzePosts() {
         style,
         topic,
         language,
+        experiment,
         hour: roundedHour,
+        hourBrazil: roundedHourBrazil,
+        hourUSA: roundedHourUSA,
         metrics: tweet.metrics,
         engagement,
         engagementRate,
@@ -534,6 +689,9 @@ export async function analyzePosts() {
       existingPost.metrics = tweet.metrics
       existingPost.engagement = engagement
       existingPost.engagementRate = engagementRate
+      existingPost.experiment = experiment
+      existingPost.hourBrazil = roundedHourBrazil
+      existingPost.hourUSA = roundedHourUSA
       existingPost.lastUpdated = new Date().toISOString()
     }
   }
@@ -552,7 +710,10 @@ export async function analyzePosts() {
     style: c.style,
     topic: c.topic,
     language: c.language,
+    experiment: c.experiment,
     hour: c.hour,
+    hourBrazil: c.hourBrazil,
+    hourUSA: c.hourUSA,
     avgEngagementRate: c.engagementRate,
     sample: c.text
   }))
@@ -572,7 +733,10 @@ export async function analyzePosts() {
     topStyle: findTopByScore(learnings.scores.styles),
     topTopic: findTopByScore(learnings.scores.topics),
     topHour: findTopByScore(learnings.scores.hours),
-    topLanguage: findTopByScore(learnings.scores.languages)
+    topLanguage: findTopByScore(learnings.scores.languages),
+    topExperiment: findTopByScore(learnings.scores.experiments),
+    topHourBrazil: findTopByScore(learnings.scores.hoursBrazil),
+    topHourUSA: findTopByScore(learnings.scores.hoursUSA)
   }
 }
 
@@ -599,68 +763,37 @@ function updateScores(learnings, analysis) {
     globalAvgImpressions = 1
   }
 
-  // Update hook scores
-  for (const [hook, data] of Object.entries(analysis.byHook)) {
-    if (learnings.scores.hooks[hook] && data.count >= 1) {
-      const avgEngagement = data.totalEngagement / data.count
-      const avgImpressions = data.totalImpressions / data.count
-      const relativeScore = (avgEngagement / Math.max(globalAvgEngagement, 1)) * 50 + 50
+  // Helper function to update a category's scores
+  const updateCategoryScores = (analysisData, scoresData) => {
+    for (const [key, data] of Object.entries(analysisData)) {
+      if (scoresData[key] && data.count >= 1) {
+        const avgEngagement = data.totalEngagement / data.count
+        const avgImpressions = data.totalImpressions / data.count
+        const relativeScore = (avgEngagement / Math.max(globalAvgEngagement, 1)) * 50 + 50
 
-      // Weighted average with existing score
-      const existingWeight = learnings.scores.hooks[hook].count * DECAY_FACTOR
-      const newWeight = data.count
-      const totalWeight = existingWeight + newWeight
+        // Weighted average with existing score
+        const existingWeight = scoresData[key].count * DECAY_FACTOR
+        const newWeight = data.count
+        const totalWeight = existingWeight + newWeight
 
-      learnings.scores.hooks[hook].score = (
-        (learnings.scores.hooks[hook].score * existingWeight + relativeScore * newWeight) / totalWeight
-      )
-      learnings.scores.hooks[hook].count += data.count
-      learnings.scores.hooks[hook].avgEngagement = avgEngagement
-      learnings.scores.hooks[hook].avgImpressions = avgImpressions
+        scoresData[key].score = (
+          (scoresData[key].score * existingWeight + relativeScore * newWeight) / totalWeight
+        )
+        scoresData[key].count += data.count
+        scoresData[key].avgEngagement = avgEngagement
+        scoresData[key].avgImpressions = avgImpressions
+      }
     }
   }
 
-  // Update style scores
-  for (const [style, data] of Object.entries(analysis.byStyle)) {
-    if (learnings.scores.styles[style] && data.count >= 1) {
-      const avgEngagement = data.totalEngagement / data.count
-      const avgImpressions = data.totalImpressions / data.count
-      const relativeScore = (avgEngagement / Math.max(globalAvgEngagement, 1)) * 50 + 50
+  // Update all category scores
+  updateCategoryScores(analysis.byHook, learnings.scores.hooks)
+  updateCategoryScores(analysis.byStyle, learnings.scores.styles)
+  updateCategoryScores(analysis.byTopic, learnings.scores.topics)
+  updateCategoryScores(analysis.byLanguage, learnings.scores.languages)
+  updateCategoryScores(analysis.byExperiment, learnings.scores.experiments)
 
-      const existingWeight = learnings.scores.styles[style].count * DECAY_FACTOR
-      const newWeight = data.count
-      const totalWeight = existingWeight + newWeight
-
-      learnings.scores.styles[style].score = (
-        (learnings.scores.styles[style].score * existingWeight + relativeScore * newWeight) / totalWeight
-      )
-      learnings.scores.styles[style].count += data.count
-      learnings.scores.styles[style].avgEngagement = avgEngagement
-      learnings.scores.styles[style].avgImpressions = avgImpressions
-    }
-  }
-
-  // Update topic scores
-  for (const [topic, data] of Object.entries(analysis.byTopic)) {
-    if (learnings.scores.topics[topic] && data.count >= 1) {
-      const avgEngagement = data.totalEngagement / data.count
-      const avgImpressions = data.totalImpressions / data.count
-      const relativeScore = (avgEngagement / Math.max(globalAvgEngagement, 1)) * 50 + 50
-
-      const existingWeight = learnings.scores.topics[topic].count * DECAY_FACTOR
-      const newWeight = data.count
-      const totalWeight = existingWeight + newWeight
-
-      learnings.scores.topics[topic].score = (
-        (learnings.scores.topics[topic].score * existingWeight + relativeScore * newWeight) / totalWeight
-      )
-      learnings.scores.topics[topic].count += data.count
-      learnings.scores.topics[topic].avgEngagement = avgEngagement
-      learnings.scores.topics[topic].avgImpressions = avgImpressions
-    }
-  }
-
-  // Update hour scores
+  // Update hour scores (need parseInt for keys)
   for (const [hour, data] of Object.entries(analysis.byHour)) {
     const hourKey = parseInt(hour)
     if (learnings.scores.hours[hourKey] && data.count >= 1) {
@@ -681,23 +814,45 @@ function updateScores(learnings, analysis) {
     }
   }
 
-  // Update language scores
-  for (const [lang, data] of Object.entries(analysis.byLanguage)) {
-    if (learnings.scores.languages[lang] && data.count >= 1) {
+  // Update Brazil hours
+  for (const [hour, data] of Object.entries(analysis.byHourBrazil)) {
+    const hourKey = parseInt(hour)
+    if (learnings.scores.hoursBrazil[hourKey] && data.count >= 1) {
       const avgEngagement = data.totalEngagement / data.count
       const avgImpressions = data.totalImpressions / data.count
       const relativeScore = (avgEngagement / Math.max(globalAvgEngagement, 1)) * 50 + 50
 
-      const existingWeight = learnings.scores.languages[lang].count * DECAY_FACTOR
+      const existingWeight = learnings.scores.hoursBrazil[hourKey].count * DECAY_FACTOR
       const newWeight = data.count
       const totalWeight = existingWeight + newWeight
 
-      learnings.scores.languages[lang].score = (
-        (learnings.scores.languages[lang].score * existingWeight + relativeScore * newWeight) / totalWeight
+      learnings.scores.hoursBrazil[hourKey].score = (
+        (learnings.scores.hoursBrazil[hourKey].score * existingWeight + relativeScore * newWeight) / totalWeight
       )
-      learnings.scores.languages[lang].count += data.count
-      learnings.scores.languages[lang].avgEngagement = avgEngagement
-      learnings.scores.languages[lang].avgImpressions = avgImpressions
+      learnings.scores.hoursBrazil[hourKey].count += data.count
+      learnings.scores.hoursBrazil[hourKey].avgEngagement = avgEngagement
+      learnings.scores.hoursBrazil[hourKey].avgImpressions = avgImpressions
+    }
+  }
+
+  // Update USA hours
+  for (const [hour, data] of Object.entries(analysis.byHourUSA)) {
+    const hourKey = parseInt(hour)
+    if (learnings.scores.hoursUSA[hourKey] && data.count >= 1) {
+      const avgEngagement = data.totalEngagement / data.count
+      const avgImpressions = data.totalImpressions / data.count
+      const relativeScore = (avgEngagement / Math.max(globalAvgEngagement, 1)) * 50 + 50
+
+      const existingWeight = learnings.scores.hoursUSA[hourKey].count * DECAY_FACTOR
+      const newWeight = data.count
+      const totalWeight = existingWeight + newWeight
+
+      learnings.scores.hoursUSA[hourKey].score = (
+        (learnings.scores.hoursUSA[hourKey].score * existingWeight + relativeScore * newWeight) / totalWeight
+      )
+      learnings.scores.hoursUSA[hourKey].count += data.count
+      learnings.scores.hoursUSA[hourKey].avgEngagement = avgEngagement
+      learnings.scores.hoursUSA[hourKey].avgImpressions = avgImpressions
     }
   }
 }
@@ -717,6 +872,290 @@ function findTopByScore(scoreMap) {
   }
 
   return topKey ? { key: topKey, score: topScore } : null
+}
+
+/**
+ * Find worst performer by score (for insights)
+ */
+function findWorstByScore(scoreMap) {
+  let worstKey = null
+  let worstScore = Infinity
+
+  for (const [key, data] of Object.entries(scoreMap)) {
+    if (data.count >= MIN_POSTS_FOR_STATS && data.score < worstScore) {
+      worstScore = data.score
+      worstKey = key
+    }
+  }
+
+  return worstKey ? { key: worstKey, score: worstScore } : null
+}
+
+// ==================== TOP PERFORMERS ====================
+
+/**
+ * Get top performers across all categories
+ * @returns {Object} Top performers with scores and engagement
+ */
+export function getTopPerformers() {
+  const learnings = loadLearnings()
+
+  const getTopFromCategory = (category) => {
+    let top = null
+    let topScore = -1
+
+    for (const [key, data] of Object.entries(category)) {
+      if (data.count >= MIN_POSTS_FOR_STATS && data.score > topScore) {
+        topScore = data.score
+        top = {
+          name: key,
+          score: Math.round(data.score * 100) / 100,
+          avgEngagement: Math.round(data.avgEngagement * 100) / 100
+        }
+      }
+    }
+
+    return top
+  }
+
+  const getWorstFromCategory = (category) => {
+    let worst = null
+    let worstScore = Infinity
+
+    for (const [key, data] of Object.entries(category)) {
+      if (data.count >= MIN_POSTS_FOR_STATS && data.score < worstScore) {
+        worstScore = data.score
+        worst = {
+          name: key,
+          score: Math.round(data.score * 100) / 100
+        }
+      }
+    }
+
+    return worst
+  }
+
+  const getTopHour = (category) => {
+    let top = null
+    let topScore = -1
+
+    for (const [hour, data] of Object.entries(category)) {
+      if (data.count >= MIN_POSTS_FOR_STATS && data.score > topScore) {
+        topScore = data.score
+        top = {
+          hour: parseInt(hour),
+          score: Math.round(data.score * 100) / 100,
+          avgEngagement: Math.round(data.avgEngagement * 100) / 100
+        }
+      }
+    }
+
+    return top
+  }
+
+  return {
+    topHook: getTopFromCategory(learnings.scores.hooks),
+    topStyle: getTopFromCategory(learnings.scores.styles),
+    topTopic: getTopFromCategory(learnings.scores.topics),
+    topExperiment: getTopFromCategory(learnings.scores.experiments),
+    topHourBrazil: getTopHour(learnings.scores.hoursBrazil),
+    topHourUSA: getTopHour(learnings.scores.hoursUSA),
+    worstHook: getWorstFromCategory(learnings.scores.hooks),
+    worstStyle: getWorstFromCategory(learnings.scores.styles)
+  }
+}
+
+// ==================== INSIGHTS GENERATION ====================
+
+/**
+ * Generate actionable insights based on learnings
+ * @returns {string[]} Array of insight strings
+ */
+export function generateInsights() {
+  const learnings = loadLearnings()
+  const insights = []
+
+  // Calculate global average engagement
+  let totalEngagement = 0
+  let totalCount = 0
+
+  for (const data of Object.values(learnings.scores.hooks)) {
+    if (data.count > 0) {
+      totalEngagement += data.avgEngagement * data.count
+      totalCount += data.count
+    }
+  }
+
+  const globalAvgEngagement = totalCount > 0 ? totalEngagement / totalCount : 1
+
+  // Hook insights
+  for (const [hook, data] of Object.entries(learnings.scores.hooks)) {
+    if (data.count >= MIN_POSTS_FOR_STATS) {
+      const percentAbove = ((data.avgEngagement - globalAvgEngagement) / globalAvgEngagement) * 100
+
+      if (percentAbove > 30) {
+        insights.push(`Boost '${hook}' hook - ${Math.round(percentAbove)}% above average`)
+      } else if (percentAbove < -30) {
+        insights.push(`Reduce '${hook}' hook - underperforming by ${Math.abs(Math.round(percentAbove))}%`)
+      }
+    }
+  }
+
+  // Style insights
+  for (const [style, data] of Object.entries(learnings.scores.styles)) {
+    if (data.count >= MIN_POSTS_FOR_STATS) {
+      const percentAbove = ((data.avgEngagement - globalAvgEngagement) / globalAvgEngagement) * 100
+
+      if (percentAbove > 30) {
+        insights.push(`Boost '${style}' style - ${Math.round(percentAbove)}% above average`)
+      } else if (percentAbove < -30) {
+        insights.push(`Reduce '${style}' style - underperforming`)
+      }
+    }
+  }
+
+  // Experiment insights
+  for (const [exp, data] of Object.entries(learnings.scores.experiments)) {
+    if (data.count >= MIN_POSTS_FOR_STATS) {
+      const percentAbove = ((data.avgEngagement - globalAvgEngagement) / globalAvgEngagement) * 100
+
+      if (percentAbove > 40) {
+        insights.push(`'${exp}' experiment working well - ${Math.round(percentAbove)}% above average`)
+      } else if (percentAbove < -40) {
+        insights.push(`'${exp}' experiment underperforming - consider reducing`)
+      }
+    }
+  }
+
+  // Brazil hour insights
+  let bestBrazilHour = null
+  let bestBrazilScore = -1
+  let bestBrazilMultiplier = 1
+
+  for (const [hour, data] of Object.entries(learnings.scores.hoursBrazil)) {
+    if (data.count >= MIN_POSTS_FOR_STATS && data.score > bestBrazilScore) {
+      bestBrazilScore = data.score
+      bestBrazilHour = parseInt(hour)
+      bestBrazilMultiplier = data.avgEngagement / Math.max(globalAvgEngagement, 1)
+    }
+  }
+
+  if (bestBrazilHour !== null && bestBrazilMultiplier > 1.3) {
+    insights.push(`Best time Brazil: ${bestBrazilHour}h (${bestBrazilMultiplier.toFixed(1)}x engagement)`)
+  }
+
+  // USA hour insights
+  let bestUSAHour = null
+  let bestUSAScore = -1
+  let bestUSAMultiplier = 1
+
+  for (const [hour, data] of Object.entries(learnings.scores.hoursUSA)) {
+    if (data.count >= MIN_POSTS_FOR_STATS && data.score > bestUSAScore) {
+      bestUSAScore = data.score
+      bestUSAHour = parseInt(hour)
+      bestUSAMultiplier = data.avgEngagement / Math.max(globalAvgEngagement, 1)
+    }
+  }
+
+  if (bestUSAHour !== null && bestUSAMultiplier > 1.3) {
+    // Convert to AM/PM format for clarity
+    const ampm = bestUSAHour >= 12 ? 'pm' : 'am'
+    const displayHour = bestUSAHour > 12 ? bestUSAHour - 12 : (bestUSAHour === 0 ? 12 : bestUSAHour)
+    insights.push(`Best time USA: ${displayHour}${ampm} EST (high impressions)`)
+  }
+
+  // Topic insights
+  let bestTopic = null
+  let bestTopicScore = -1
+
+  for (const [topic, data] of Object.entries(learnings.scores.topics)) {
+    if (data.count >= MIN_POSTS_FOR_STATS && data.score > bestTopicScore) {
+      bestTopicScore = data.score
+      bestTopic = topic
+    }
+  }
+
+  if (bestTopic) {
+    insights.push(`'${bestTopic}' topic performing best - prioritize this content`)
+  }
+
+  // Language insights
+  const enData = learnings.scores.languages['en']
+  const ptData = learnings.scores.languages['pt-BR']
+
+  if (enData?.count >= MIN_POSTS_FOR_STATS && ptData?.count >= MIN_POSTS_FOR_STATS) {
+    if (enData.avgEngagement > ptData.avgEngagement * 1.3) {
+      insights.push(`English posts outperforming PT-BR by ${Math.round((enData.avgEngagement / ptData.avgEngagement - 1) * 100)}%`)
+    } else if (ptData.avgEngagement > enData.avgEngagement * 1.3) {
+      insights.push(`PT-BR posts outperforming English by ${Math.round((ptData.avgEngagement / enData.avgEngagement - 1) * 100)}%`)
+    }
+  }
+
+  return insights
+}
+
+// ==================== DAILY COMPARISON ====================
+
+/**
+ * Compare two days of metrics
+ * @param {Object} today - Today's metrics object
+ * @param {Object} yesterday - Yesterday's metrics object
+ * @returns {Object} Comparison results
+ */
+export function getDailyComparison(today, yesterday) {
+  const safeDiv = (a, b) => b > 0 ? ((a - b) / b * 100) : (a > 0 ? 100 : 0)
+
+  return {
+    impressions: {
+      today: today?.impressions || 0,
+      yesterday: yesterday?.impressions || 0,
+      change: safeDiv(today?.impressions || 0, yesterday?.impressions || 0),
+      trend: (today?.impressions || 0) > (yesterday?.impressions || 0) ? 'up' :
+             (today?.impressions || 0) < (yesterday?.impressions || 0) ? 'down' : 'flat'
+    },
+    engagement: {
+      today: today?.engagement || 0,
+      yesterday: yesterday?.engagement || 0,
+      change: safeDiv(today?.engagement || 0, yesterday?.engagement || 0),
+      trend: (today?.engagement || 0) > (yesterday?.engagement || 0) ? 'up' :
+             (today?.engagement || 0) < (yesterday?.engagement || 0) ? 'down' : 'flat'
+    },
+    posts: {
+      today: today?.posts || 0,
+      yesterday: yesterday?.posts || 0,
+      change: safeDiv(today?.posts || 0, yesterday?.posts || 0),
+      trend: (today?.posts || 0) > (yesterday?.posts || 0) ? 'up' :
+             (today?.posts || 0) < (yesterday?.posts || 0) ? 'down' : 'flat'
+    },
+    avgEngagementRate: {
+      today: today?.avgEngagementRate || 0,
+      yesterday: yesterday?.avgEngagementRate || 0,
+      change: safeDiv(today?.avgEngagementRate || 0, yesterday?.avgEngagementRate || 0),
+      trend: (today?.avgEngagementRate || 0) > (yesterday?.avgEngagementRate || 0) ? 'up' :
+             (today?.avgEngagementRate || 0) < (yesterday?.avgEngagementRate || 0) ? 'down' : 'flat'
+    },
+    likes: {
+      today: today?.likes || 0,
+      yesterday: yesterday?.likes || 0,
+      change: safeDiv(today?.likes || 0, yesterday?.likes || 0),
+      trend: (today?.likes || 0) > (yesterday?.likes || 0) ? 'up' :
+             (today?.likes || 0) < (yesterday?.likes || 0) ? 'down' : 'flat'
+    },
+    retweets: {
+      today: today?.retweets || 0,
+      yesterday: yesterday?.retweets || 0,
+      change: safeDiv(today?.retweets || 0, yesterday?.retweets || 0),
+      trend: (today?.retweets || 0) > (yesterday?.retweets || 0) ? 'up' :
+             (today?.retweets || 0) < (yesterday?.retweets || 0) ? 'down' : 'flat'
+    },
+    replies: {
+      today: today?.replies || 0,
+      yesterday: yesterday?.replies || 0,
+      change: safeDiv(today?.replies || 0, yesterday?.replies || 0),
+      trend: (today?.replies || 0) > (yesterday?.replies || 0) ? 'up' :
+             (today?.replies || 0) < (yesterday?.replies || 0) ? 'down' : 'flat'
+    }
+  }
 }
 
 // ==================== WEIGHT ADJUSTMENT ====================
@@ -776,6 +1215,7 @@ export function adjustWeights() {
   adjustCategory(learnings.scores.topics, 'topics')
   adjustCategory(learnings.scores.hours, 'hours')
   adjustCategory(learnings.scores.languages, 'languages')
+  adjustCategory(learnings.scores.experiments, 'experiments')
 
   learnings.recommendations = recommendations
   saveLearnings(learnings)
@@ -794,7 +1234,7 @@ export function adjustWeights() {
 /**
  * Select from options using learned weights
  * @param {string[]} options - Array of options to choose from
- * @param {string} category - Category name (hooks, styles, topics, hours, languages)
+ * @param {string} category - Category name (hooks, styles, topics, hours, languages, experiments)
  * @returns {string} Selected option
  */
 export function weightedSelect(options, category) {
@@ -882,7 +1322,8 @@ export async function generateDailyReport() {
     replies: todaysPosts.reduce((sum, p) => sum + (p.metrics?.replies || 0), 0),
     avgEngagementRate: todaysPosts.length > 0
       ? todaysPosts.reduce((sum, p) => sum + (p.engagementRate || 0), 0) / todaysPosts.length
-      : 0
+      : 0,
+    experimentsUsed: todaysPosts.filter(p => p.experiment).length
   }
 
   // Calculate yesterday's metrics
@@ -890,22 +1331,20 @@ export async function generateDailyReport() {
     posts: yesterdaysPosts.length,
     impressions: yesterdaysPosts.reduce((sum, p) => sum + (p.metrics?.impressions || 0), 0),
     engagement: yesterdaysPosts.reduce((sum, p) => sum + (p.engagement || 0), 0),
+    likes: yesterdaysPosts.reduce((sum, p) => sum + (p.metrics?.likes || 0), 0),
+    retweets: yesterdaysPosts.reduce((sum, p) => sum + (p.metrics?.retweets || 0), 0),
+    replies: yesterdaysPosts.reduce((sum, p) => sum + (p.metrics?.replies || 0), 0),
     avgEngagementRate: yesterdaysPosts.length > 0
       ? yesterdaysPosts.reduce((sum, p) => sum + (p.engagementRate || 0), 0) / yesterdaysPosts.length
       : 0
   }
 
-  // Calculate changes
+  // Calculate changes using the new comparison function
+  const comparison = getDailyComparison(todayMetrics, yesterdayMetrics)
   const changes = {
-    impressions: yesterdayMetrics.impressions > 0
-      ? ((todayMetrics.impressions - yesterdayMetrics.impressions) / yesterdayMetrics.impressions * 100)
-      : 0,
-    engagement: yesterdayMetrics.engagement > 0
-      ? ((todayMetrics.engagement - yesterdayMetrics.engagement) / yesterdayMetrics.engagement * 100)
-      : 0,
-    engagementRate: yesterdayMetrics.avgEngagementRate > 0
-      ? ((todayMetrics.avgEngagementRate - yesterdayMetrics.avgEngagementRate) / yesterdayMetrics.avgEngagementRate * 100)
-      : 0
+    impressions: comparison.impressions.change,
+    engagement: comparison.engagement.change,
+    engagementRate: comparison.avgEngagementRate.change
   }
 
   // Top 3 posts today
@@ -919,16 +1358,21 @@ export async function generateDailyReport() {
       hook: p.hook,
       style: p.style,
       topic: p.topic,
-      language: p.language
+      language: p.language,
+      experiment: p.experiment
     }))
 
-  // Best performers by category
+  // Best performers by category (using new function)
+  const topPerformers = getTopPerformers()
   const bestPerformers = {
-    hook: findTopByScore(learnings.scores.hooks),
-    style: findTopByScore(learnings.scores.styles),
-    topic: findTopByScore(learnings.scores.topics),
+    hook: topPerformers.topHook ? { key: topPerformers.topHook.name, score: topPerformers.topHook.score } : null,
+    style: topPerformers.topStyle ? { key: topPerformers.topStyle.name, score: topPerformers.topStyle.score } : null,
+    topic: topPerformers.topTopic ? { key: topPerformers.topTopic.name, score: topPerformers.topTopic.score } : null,
     hour: findTopByScore(learnings.scores.hours),
-    language: findTopByScore(learnings.scores.languages)
+    language: findTopByScore(learnings.scores.languages),
+    experiment: topPerformers.topExperiment ? { key: topPerformers.topExperiment.name, score: topPerformers.topExperiment.score } : null,
+    hourBrazil: topPerformers.topHourBrazil ? { key: topPerformers.topHourBrazil.hour, score: topPerformers.topHourBrazil.score } : null,
+    hourUSA: topPerformers.topHourUSA ? { key: topPerformers.topHourUSA.hour, score: topPerformers.topHourUSA.score } : null
   }
 
   // Projection to 5M impressions goal
@@ -938,9 +1382,11 @@ export async function generateDailyReport() {
   const daysToGoal = avgDailyImpressions > 0 ? Math.ceil((IMPRESSIONS_GOAL - totalImpressions) / avgDailyImpressions) : Infinity
   const progressPercent = (totalImpressions / IMPRESSIONS_GOAL) * 100
 
-  // Generate recommendations
-  const recommendations = []
+  // Generate recommendations using the new insights function
+  const insights = generateInsights()
+  const recommendations = [...insights]
 
+  // Add legacy recommendations for compatibility
   if (bestPerformers.hook) {
     recommendations.push(`Use more "${bestPerformers.hook.key}" hook (score: ${Math.round(bestPerformers.hook.score)})`)
   }
@@ -955,6 +1401,9 @@ export async function generateDailyReport() {
   }
   if (bestPerformers.language) {
     recommendations.push(`Top language: ${bestPerformers.language.key} (score: ${Math.round(bestPerformers.language.score)})`)
+  }
+  if (bestPerformers.experiment) {
+    recommendations.push(`Top experiment: ${bestPerformers.experiment.key} (score: ${Math.round(bestPerformers.experiment.score)})`)
   }
 
   // Add low performers to avoid
@@ -971,9 +1420,11 @@ export async function generateDailyReport() {
     todayMetrics,
     yesterdayMetrics,
     changes,
+    comparison,
 
     top3Posts,
     bestPerformers,
+    topPerformers,
 
     goal: {
       target: IMPRESSIONS_GOAL,
@@ -986,6 +1437,7 @@ export async function generateDailyReport() {
         : 'N/A'
     },
 
+    insights,
     recommendations,
 
     weights: learnings.weights,
@@ -1026,7 +1478,11 @@ export function formatReportForTelegram(report) {
   msg += `  Posts: ${report.todayMetrics.posts}\n`
   msg += `  Impressions: ${report.todayMetrics.impressions.toLocaleString()}\n`
   msg += `  Engagement: ${report.todayMetrics.engagement}\n`
-  msg += `  Avg ER: ${report.todayMetrics.avgEngagementRate.toFixed(2)}%\n\n`
+  msg += `  Avg ER: ${report.todayMetrics.avgEngagementRate.toFixed(2)}%\n`
+  if (report.todayMetrics.experimentsUsed > 0) {
+    msg += `  Experiments: ${report.todayMetrics.experimentsUsed} posts\n`
+  }
+  msg += `\n`
 
   // Comparison
   msg += `<b>vs Yesterday:</b>\n`
@@ -1039,7 +1495,23 @@ export function formatReportForTelegram(report) {
     msg += `<b>Top 3 Posts:</b>\n`
     for (let i = 0; i < report.top3Posts.length; i++) {
       const p = report.top3Posts[i]
-      msg += `${i + 1}. [${p.engagement}eng] "${p.text.substring(0, 50)}..."\n`
+      const expTag = p.experiment ? ` [${p.experiment}]` : ''
+      msg += `${i + 1}. [${p.engagement}eng${expTag}] "${p.text.substring(0, 50)}..."\n`
+    }
+    msg += `\n`
+  }
+
+  // Best times by timezone
+  if (report.topPerformers?.topHourBrazil || report.topPerformers?.topHourUSA) {
+    msg += `<b>Best Times:</b>\n`
+    if (report.topPerformers.topHourBrazil) {
+      msg += `  🇧🇷 Brazil: ${report.topPerformers.topHourBrazil.hour}h BRT\n`
+    }
+    if (report.topPerformers.topHourUSA) {
+      const h = report.topPerformers.topHourUSA.hour
+      const ampm = h >= 12 ? 'pm' : 'am'
+      const displayH = h > 12 ? h - 12 : (h === 0 ? 12 : h)
+      msg += `  🇺🇸 USA: ${displayH}${ampm} EST\n`
     }
     msg += `\n`
   }
@@ -1049,6 +1521,15 @@ export function formatReportForTelegram(report) {
   msg += `  ${report.goal.progressPercent.toFixed(2)}% (${(report.goal.current / 1000000).toFixed(2)}M / 5M)\n`
   msg += `  Avg/day: ${report.goal.avgDailyImpressions.toLocaleString()}\n`
   msg += `  ETA: ${report.goal.projectedDate}\n\n`
+
+  // Insights (new)
+  if (report.insights && report.insights.length > 0) {
+    msg += `<b>Insights:</b>\n`
+    for (const insight of report.insights.slice(0, 5)) {
+      msg += `  • ${insight}\n`
+    }
+    msg += `\n`
+  }
 
   // Recommendations
   if (report.recommendations.length > 0) {
@@ -1063,6 +1544,9 @@ export function formatReportForTelegram(report) {
 
 // ==================== EXPORTS ====================
 
+// Named exports for functions not already exported inline
+export { loadLearnings, saveLearnings, detectExperiment }
+
 export default {
   analyzePosts,
   adjustWeights,
@@ -1071,5 +1555,9 @@ export default {
   weightedSelect,
   getTopWeighted,
   loadLearnings,
-  saveLearnings
+  saveLearnings,
+  getTopPerformers,
+  generateInsights,
+  getDailyComparison,
+  detectExperiment
 }
