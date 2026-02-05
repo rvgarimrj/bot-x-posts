@@ -673,10 +673,264 @@ export function getLearningStats() {
   }
 }
 
+// ==================== THREAD GENERATION ====================
+
+/**
+ * Thread frameworks - structures that work for multi-tweet stories
+ */
+const THREAD_FRAMEWORKS = {
+  'en': [
+    {
+      name: 'story',
+      instruction: 'Tell a story with a clear arc: setup, tension, resolution. Each tweet should make them want the next.',
+      structure: ['Hook/Setup (grab attention)', 'Context/Problem', 'Key insight/Turning point', 'Lesson/Takeaway', 'CTA/Question']
+    },
+    {
+      name: 'listicle',
+      instruction: 'Numbered list of insights. Each point should stand alone but build on the theme.',
+      structure: ['Hook: "X things I learned about Y"', 'Point 1 (most surprising)', 'Point 2', 'Point 3', 'Point 4 + CTA']
+    },
+    {
+      name: 'breakdown',
+      instruction: 'Break down a complex topic into digestible pieces. Educational but not boring.',
+      structure: ['Hook: Why this matters NOW', 'The basics (quick)', 'The insight most miss', 'How to apply it', 'Summary + resources']
+    },
+    {
+      name: 'contrarian',
+      instruction: 'Challenge conventional wisdom. Start controversial, back it up, land the point.',
+      structure: ['Controversial take', 'Why most people believe the opposite', 'Evidence/experience', 'The real truth', 'What to do about it']
+    }
+  ],
+  'pt-BR': [
+    {
+      name: 'story',
+      instruction: 'Conta uma história com arco claro: setup, tensão, resolução. Cada tweet faz querer o próximo.',
+      structure: ['Gancho/Setup (prende atenção)', 'Contexto/Problema', 'Insight chave/Ponto de virada', 'Lição/Conclusão', 'CTA/Pergunta']
+    },
+    {
+      name: 'listicle',
+      instruction: 'Lista numerada de insights. Cada ponto funciona sozinho mas constrói o tema.',
+      structure: ['Gancho: "X coisas que aprendi sobre Y"', 'Ponto 1 (mais surpreendente)', 'Ponto 2', 'Ponto 3', 'Ponto 4 + CTA']
+    },
+    {
+      name: 'breakdown',
+      instruction: 'Quebra um tema complexo em pedaços digeríveis. Educativo mas não chato.',
+      structure: ['Gancho: Por que isso importa AGORA', 'O básico (rápido)', 'O insight que maioria perde', 'Como aplicar', 'Resumo + recursos']
+    },
+    {
+      name: 'contrarian',
+      instruction: 'Desafia a sabedoria convencional. Começa controverso, embasa, fecha o ponto.',
+      structure: ['Take controverso', 'Por que maioria acredita o oposto', 'Evidência/experiência', 'A verdade real', 'O que fazer sobre isso']
+    }
+  ]
+}
+
+/**
+ * Generate a thread (multiple connected tweets)
+ * @param {string} topic - Topic (crypto, investing, ai, vibeCoding)
+ * @param {string} newsContext - Formatted data context
+ * @param {string} language - Language code (en or pt-BR)
+ * @param {number} tweetCount - Number of tweets in thread (4-6 recommended)
+ * @returns {Promise<Object>} Generated thread with metadata
+ */
+export async function generateThread(topic, newsContext, language = 'pt-BR', tweetCount = 5) {
+  // Build system prompt based on language and topic
+  const basePrompt = language === 'en' ? SYSTEM_PROMPT_EN : SYSTEM_PROMPT_PT_BR
+  const topicContext = TOPIC_CONTEXT[topic]?.[language] || ''
+
+  // Thread-specific system additions
+  const threadSystemAddition = language === 'en'
+    ? `\n\n=== THREAD RULES ===
+- You're writing a THREAD (multiple connected tweets)
+- Each tweet MAX 250 chars (shorter is better)
+- First tweet is the HOOK - must stop the scroll
+- Each tweet should make them want the next
+- Use "🧵" in first tweet to signal thread
+- Number tweets: 1/, 2/, 3/, etc.
+- Last tweet should have CTA or question
+- NO hashtags except in last tweet
+- Thread should tell a STORY or provide VALUE`
+    : `\n\n=== REGRAS DE THREAD ===
+- Você está escrevendo uma THREAD (múltiplos tweets conectados)
+- Cada tweet MAX 250 chars (menor é melhor)
+- Primeiro tweet é o GANCHO - tem que parar o scroll
+- Cada tweet deve fazer querer o próximo
+- Use "🧵" no primeiro tweet pra sinalizar thread
+- Numere os tweets: 1/, 2/, 3/, etc.
+- Último tweet deve ter CTA ou pergunta
+- SEM hashtags exceto no último tweet
+- Thread deve contar uma HISTÓRIA ou entregar VALOR`
+
+  const fullSystemPrompt = basePrompt + topicContext + threadSystemAddition
+
+  // Select framework
+  const frameworks = THREAD_FRAMEWORKS[language] || THREAD_FRAMEWORKS['en']
+  const selectedFramework = frameworks[Math.floor(Math.random() * frameworks.length)]
+
+  console.log(`      [thread framework: ${selectedFramework.name}]`)
+
+  const userPrompt = language === 'en'
+    ? `TOPIC: ${topic}
+
+DATA:
+${newsContext}
+
+=== YOUR ASSIGNMENT ===
+Write a ${tweetCount}-tweet THREAD using this framework:
+FRAMEWORK: ${selectedFramework.name}
+INSTRUCTION: ${selectedFramework.instruction}
+STRUCTURE: ${selectedFramework.structure.join(' → ')}
+
+CRITICAL:
+- First tweet MUST have 🧵 emoji
+- Number each tweet (1/, 2/, etc.)
+- Each tweet MAX 250 chars
+- Make it a STORY, not just facts
+- Sound human, not AI
+- Last tweet: hashtags + CTA
+
+Output format (one tweet per line, separated by ---):
+1/ First tweet here 🧵
+
+---
+
+2/ Second tweet here
+
+---
+
+3/ Third tweet here
+
+---
+
+etc.`
+    : `TÓPICO: ${topic}
+
+DADOS:
+${newsContext}
+
+=== SUA TAREFA ===
+Escreva uma THREAD de ${tweetCount} tweets usando este framework:
+FRAMEWORK: ${selectedFramework.name}
+INSTRUÇÃO: ${selectedFramework.instruction}
+ESTRUTURA: ${selectedFramework.structure.join(' → ')}
+
+CRÍTICO:
+- Primeiro tweet TEM QUE ter emoji 🧵
+- Numere cada tweet (1/, 2/, etc.)
+- Cada tweet MAX 250 chars
+- Faça ser uma HISTÓRIA, não só fatos
+- Som humano, não IA
+- Último tweet: hashtags + CTA
+
+Formato de saída (um tweet por linha, separados por ---):
+1/ Primeiro tweet aqui 🧵
+
+---
+
+2/ Segundo tweet aqui
+
+---
+
+3/ Terceiro tweet aqui
+
+---
+
+etc.`
+
+  const message = await anthropic.messages.create({
+    model: 'claude-opus-4-5-20251101',
+    max_tokens: 1500,
+    system: fullSystemPrompt,
+    messages: [{
+      role: 'user',
+      content: userPrompt
+    }]
+  })
+
+  const rawOutput = message.content[0].text.trim()
+
+  // Parse the thread into individual tweets
+  const tweets = rawOutput
+    .split('---')
+    .map(t => t.trim())
+    .filter(t => t.length > 0 && t.length <= 280)
+
+  // Validate we got enough tweets
+  if (tweets.length < 3) {
+    console.log(`   ⚠️ Thread muito curta (${tweets.length} tweets), regenerando...`)
+    return generateThread(topic, newsContext, language, tweetCount)
+  }
+
+  return {
+    tweets,
+    _metadata: {
+      framework: selectedFramework.name,
+      topic,
+      language,
+      tweetCount: tweets.length,
+      totalChars: tweets.reduce((sum, t) => sum + t.length, 0),
+      generatedAt: new Date().toISOString()
+    }
+  }
+}
+
+/**
+ * Generate a thread for the best performing topic
+ * Analyzes curated content and picks the most engaging topic
+ * @param {Object} curated - Curated data from curateContentV3
+ * @param {string} language - Language code
+ * @returns {Promise<Object>} Generated thread with topic info
+ */
+export async function generateBestThread(curated, language = 'en') {
+  // Pick topic with most interesting data
+  const topics = Object.keys(curated).filter(t => curated[t])
+
+  // Score topics by data richness (narrative strength, data freshness)
+  let bestTopic = topics[0]
+  let bestScore = 0
+
+  for (const topic of topics) {
+    const data = curated[topic]
+    let score = 0
+
+    // Has narrative = +3
+    if (data.narrative) score += 3
+
+    // Strong sentiment = +2
+    if (data.sentiment === 'bullish' || data.sentiment === 'bearish') score += 2
+
+    // Has suggested angles = +1 per angle
+    if (data.suggestedAngles) score += data.suggestedAngles.length
+
+    // Has real data (not fallback) = +2
+    if (data.sources && data.sources.length > 0) score += 2
+
+    if (score > bestScore) {
+      bestScore = score
+      bestTopic = topic
+    }
+  }
+
+  console.log(`   📊 Best topic for thread: ${bestTopic} (score: ${bestScore})`)
+
+  // Format context for thread generation
+  const { formatForPrompt } = await import('./curate-v3.js')
+  const context = formatForPrompt(curated, bestTopic, language)
+
+  const thread = await generateThread(bestTopic, context, language, 5)
+
+  return {
+    ...thread,
+    topic: bestTopic
+  }
+}
+
 export default {
   generatePost,
   generateAllPosts,
   generateMultiplePosts,
+  generateThread,
+  generateBestThread,
   getLearningStats,
   getExperimentNames,
   getAllExperiments

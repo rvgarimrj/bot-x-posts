@@ -9,20 +9,27 @@
  */
 
 import 'dotenv/config'
-import { generatePost } from '../src/claude-v2.js'
+import { generatePost, generateBestThread } from '../src/claude-v2.js'
 import { curateContentV3, formatForPrompt, getFallbackContentV3 } from '../src/curate-v3.js'
-import { postTweet } from '../src/puppeteer-post.js'
+import { postTweet, postThread } from '../src/puppeteer-post.js'
+import { generateImage, generateImagePrompt, cleanupTempImages } from '../src/image-generator.js'
 import TelegramBot from 'node-telegram-bot-api'
 
 // ==================== CONFIGURATION ====================
 
 const WAIT_BEFORE_POST_MS = 2 * 60 * 1000  // 2 minutes for review
 const DELAY_BETWEEN_POSTS_MS = 60 * 1000   // 60 seconds between posts
+const DELAY_AFTER_THREAD_MS = 90 * 1000    // 90 seconds after thread
 const MAX_RETRIES = 2
 
 // Topics and languages
 const TOPICS = ['crypto', 'investing', 'ai', 'vibeCoding']
 const LANGUAGES = ['en', 'pt-BR']
+
+// Thread configuration
+const THREAD_HOURS = [10, 18]  // Post threads at 10h and 18h only
+const THREAD_LANGUAGE = 'en'   // Threads in English reach more people
+const THREAD_WITH_IMAGE = true // Generate image for first tweet of thread
 
 // Telegram bot
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: false })
@@ -168,6 +175,46 @@ async function main() {
 
   console.log(`   ✅ ${posts.length} posts gerados`)
 
+  // ==================== 2.5 GENERATE THREAD (only at specific hours) ====================
+
+  let thread = null
+  let threadImage = null
+  const isThreadHour = THREAD_HOURS.includes(hour)
+
+  if (isThreadHour) {
+    console.log(`\n2.5. Gerando thread (horário ${hour}h é horário de thread)...`)
+
+    try {
+      thread = await generateBestThread(content, THREAD_LANGUAGE)
+      console.log(`   ✅ Thread gerada: ${thread.tweets.length} tweets sobre ${thread.topic}`)
+      console.log(`   📊 Framework: ${thread._metadata.framework}`)
+
+      // Generate image for first tweet
+      if (THREAD_WITH_IMAGE && thread.tweets.length > 0) {
+        console.log('\n2.6. Gerando imagem para thread...')
+        const imagePrompt = generateImagePrompt(thread.tweets[0], thread.topic, 'cyber')
+        console.log(`   Prompt: "${imagePrompt.substring(0, 60)}..."`)
+
+        const imageResult = await generateImage(imagePrompt)
+        if (imageResult.success) {
+          threadImage = imageResult.path
+          console.log(`   ✅ Imagem gerada: ${threadImage}`)
+        } else {
+          console.log(`   ⚠️ Imagem falhou: ${imageResult.error}`)
+          // Continue without image
+        }
+      }
+    } catch (err) {
+      console.log(`   ⚠️ Erro ao gerar thread: ${err.message}`)
+      thread = null
+    }
+  } else {
+    console.log(`\n2.5. Pulando thread (horário ${hour}h não é horário de thread - threads às ${THREAD_HOURS.join('h e ')}h)`)
+  }
+
+  // Cleanup old temp images
+  cleanupTempImages()
+
   // ==================== 3. TELEGRAM PREVIEW ====================
 
   console.log('\n3. Enviando preview para Telegram...')
@@ -190,6 +237,30 @@ async function main() {
     for (const p of topicPosts) {
       const flag = getLanguageFlag(p.language)
       previewMsg += `${flag} "${escapeHtml(p.post.substring(0, 150))}${p.post.length > 150 ? '...' : ''}"\n`
+    }
+    previewMsg += `\n`
+  }
+
+  // Add thread preview if generated
+  if (thread && thread.tweets) {
+    const threadEmoji = getTopicEmoji(thread.topic)
+    const threadFlag = THREAD_LANGUAGE === 'en' ? '🇺🇸' : '🇧🇷'
+    const imageIndicator = threadImage ? ' 🖼️' : ''
+
+    previewMsg += `🧵 <b>THREAD</b> ${threadEmoji}${threadFlag}${imageIndicator} (${thread.tweets.length} tweets)\n`
+    previewMsg += `<i>Framework: ${thread._metadata.framework}</i>\n`
+    if (threadImage) {
+      previewMsg += `<i>📷 Com imagem no 1º tweet</i>\n`
+    }
+    previewMsg += `\n`
+
+    for (let i = 0; i < Math.min(thread.tweets.length, 3); i++) {
+      const tweet = thread.tweets[i]
+      previewMsg += `${i + 1}/ "${escapeHtml(tweet.substring(0, 100))}${tweet.length > 100 ? '...' : ''}"\n`
+    }
+
+    if (thread.tweets.length > 3) {
+      previewMsg += `<i>... +${thread.tweets.length - 3} mais tweets</i>\n`
     }
     previewMsg += `\n`
   }
@@ -257,10 +328,53 @@ async function main() {
 
   // ==================== 5. POST ====================
 
-  console.log('\n5. Publicando posts...')
+  console.log('\n5. Publicando conteúdo...')
   await notify('🚀 Iniciando publicação...')
 
   let successCount = 0
+  let threadSuccess = false
+
+  // ========== 5.1 POST THREAD FIRST (higher engagement potential) ==========
+
+  if (thread && thread.tweets && thread.tweets.length >= 2) {
+    const threadEmoji = getTopicEmoji(thread.topic)
+    const threadFlag = THREAD_LANGUAGE === 'en' ? '🇺🇸' : '🇧🇷'
+    const imageIndicator = threadImage ? ' 🖼️' : ''
+
+    console.log(`\n🧵 Postando THREAD${imageIndicator} (${thread.tweets.length} tweets sobre ${thread.topic})...`)
+    await notify(`🧵 Iniciando thread ${threadEmoji}${threadFlag}${imageIndicator}...`)
+
+    try {
+      // Pass image path for first tweet (optional)
+      const threadResult = await postThread(thread.tweets, async (idx, total, status) => {
+        if (status === 'composing') {
+          console.log(`   📝 Preparando tweet ${idx + 1}/${total}...`)
+        } else if (status === 'posted') {
+          console.log(`   ✅ Thread publicada!`)
+        }
+      }, threadImage)  // Pass image for first tweet
+
+      if (threadResult.success || threadResult.postedCount > 0) {
+        threadSuccess = true
+        const imgStr = threadImage ? ' com imagem' : ''
+        console.log(`   ✅ Thread publicada${imgStr}: ${threadResult.postedCount}/${thread.tweets.length} tweets`)
+        await notify(`✅ 🧵 Thread publicada${imgStr}: ${threadResult.postedCount}/${thread.tweets.length} tweets!`)
+      } else {
+        console.log(`   ❌ Thread falhou: ${threadResult.error}`)
+        await notify(`❌ 🧵 Thread falhou: ${threadResult.error}`)
+      }
+    } catch (err) {
+      console.log(`   ❌ Erro na thread: ${err.message}`)
+      await notify(`❌ 🧵 Erro na thread: ${err.message}`)
+    }
+
+    // Longer delay after thread
+    console.log(`   ⏳ Aguardando ${DELAY_AFTER_THREAD_MS / 1000}s após thread...`)
+    await new Promise(r => setTimeout(r, DELAY_AFTER_THREAD_MS))
+  }
+
+  // ========== 5.2 POST INDIVIDUAL TWEETS ==========
+
   for (let i = 0; i < posts.length; i++) {
     const { topic, language, post } = posts[i]
     const emoji = getTopicEmoji(topic)
@@ -289,8 +403,9 @@ async function main() {
 
   // ==================== 6. SUMMARY ====================
 
-  console.log(`\n✅ Finalizado: ${successCount}/${posts.length} posts publicados`)
-  await notify(`✅ <b>${successCount}/${posts.length}</b> posts publicados!`)
+  const threadStr = thread ? (threadSuccess ? ' + 🧵 thread' : ' (thread falhou)') : ''
+  console.log(`\n✅ Finalizado: ${successCount}/${posts.length} posts publicados${threadStr}`)
+  await notify(`✅ <b>${successCount}/${posts.length}</b> posts publicados${threadStr}!`)
 
   process.exit(0)
 }

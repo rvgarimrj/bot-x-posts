@@ -56,19 +56,21 @@ Cron (8h,10h,12h,14h,16h,18h,20h,22h,23h - Daily)
 
 ## Horarios e Topicos (TODOS OS DIAS)
 
-| Horario | Posts | Topicos | Idiomas |
-|---------|-------|---------|---------|
-| 8h | 8 | crypto, investing, ai, vibeCoding | EN + PT-BR |
-| 10h | 8 | crypto, investing, ai, vibeCoding | EN + PT-BR |
-| 12h | 8 | crypto, investing, ai, vibeCoding | EN + PT-BR |
-| 14h | 8 | crypto, investing, ai, vibeCoding | EN + PT-BR |
-| 16h | 8 | crypto, investing, ai, vibeCoding | EN + PT-BR |
-| 18h | 8 | crypto, investing, ai, vibeCoding | EN + PT-BR |
-| 20h | 8 | crypto, investing, ai, vibeCoding | EN + PT-BR |
-| 22h | 8 | crypto, investing, ai, vibeCoding | EN + PT-BR |
-| 23h | 8 | crypto, investing, ai, vibeCoding | EN + PT-BR |
+| Horario | Posts | Thread | Topicos | Idiomas |
+|---------|-------|--------|---------|---------|
+| 8h | 8 | - | crypto, investing, ai, vibeCoding | EN + PT-BR |
+| 10h | 8 | 🧵🖼️ | crypto, investing, ai, vibeCoding | EN + PT-BR |
+| 12h | 8 | - | crypto, investing, ai, vibeCoding | EN + PT-BR |
+| 14h | 8 | - | crypto, investing, ai, vibeCoding | EN + PT-BR |
+| 16h | 8 | - | crypto, investing, ai, vibeCoding | EN + PT-BR |
+| 18h | 8 | 🧵🖼️ | crypto, investing, ai, vibeCoding | EN + PT-BR |
+| 20h | 8 | - | crypto, investing, ai, vibeCoding | EN + PT-BR |
+| 22h | 8 | - | crypto, investing, ai, vibeCoding | EN + PT-BR |
+| 23h | 8 | - | crypto, investing, ai, vibeCoding | EN + PT-BR |
 
-**Total:** 72 posts/dia x 7 dias = 504 posts/semana
+**Total:** 72 posts + 2 threads com imagem/dia = 82 tweets/dia
+
+**Threads:** Às 10h e 18h (horários de pico global e BR), em inglês, com imagem gerada por IA no primeiro tweet.
 
 ### Ciclos Automaticos Adicionais
 
@@ -81,14 +83,16 @@ Cron (8h,10h,12h,14h,16h,18h,20h,22h,23h - Daily)
 
 ## Arquivos Principais
 
-### V2 (Novo - Multi-Source Bilingual + Reply Monitor)
+### V2 (Novo - Multi-Source Bilingual + Threads + Images)
 | Arquivo | Funcao |
 |---------|--------|
 | `scripts/cron-daemon-v2.js` | Daemon V2: 9 horarios + reply monitor + learning |
-| `scripts/auto-post-v2.js` | Fluxo V2: 8 posts (4 topicos x 2 idiomas) |
+| `scripts/auto-post-v2.js` | Fluxo V2: 8 posts + thread com imagem (10h/18h) |
 | `scripts/daily-learning.js` | Ciclo de aprendizado diario (23:59) |
 | `src/curate-v3.js` | Curadoria multi-fonte com fallback chains |
-| `src/claude-v2.js` | Geracao bilingue (EN + PT-BR) + Hook Frameworks |
+| `src/claude-v2.js` | Geracao bilingue + Threads + Hook Frameworks |
+| `src/image-generator.js` | Gera imagens via Gemini API (Nano Banana) |
+| `src/puppeteer-post.js` | Posta tweets/threads com imagens via Chrome |
 | `src/reply-monitor.js` | Monitora e responde comentarios com Claude |
 | `src/learning-engine.js` | Analisa performance, ajusta pesos |
 | `src/analytics-monitor.js` | Coleta metricas do X Analytics |
@@ -806,6 +810,203 @@ Comentario: "Discordo, acho que BTC vai subir"
 Resposta: "@usuario hmm interessante ponto de vista 👀 o que te faz pensar isso?"
 ```
 
+## Sistema de Threads com Imagens
+
+Threads geram 5-10x mais impressões que posts únicos. O sistema inclui geração automática de threads com imagem no primeiro tweet.
+
+### Estratégia de Threads
+
+| Config | Valor | Motivo |
+|--------|-------|--------|
+| **Horários** | 10h e 18h | Pico global (10h) e BR (18h) |
+| **Idioma** | Inglês (EN) | Alcance 10x maior |
+| **Imagem** | Primeiro tweet | Para o scroll, aumenta CTR |
+| **Frequência** | 2 threads/dia | Não saturar seguidores |
+
+### Como Funciona
+
+```
+┌─────────────────────────────────────────────────┐
+│           THREAD GENERATION (10h/18h)            │
+│                                                 │
+│  1. Verifica se é horário de thread             │
+│  2. Curadoria identifica melhor tópico          │
+│  3. Claude gera thread de 5 tweets              │
+│  4. Gemini gera imagem para 1º tweet            │
+│  5. Primeiro tweet tem 🧵 + hook + imagem       │
+└─────────────────────────────────────────────────┘
+           │
+           ▼
+┌─────────────────────────────────────────────────┐
+│      THREAD POSTING (Multi-Tweet Composer)       │
+│                                                 │
+│  1. Abre composer, insere tweet 1               │
+│  2. Upload da imagem no tweet 1                 │
+│  3. Clica "+" e insere tweet 2, 3, 4, 5         │
+│  4. Clica "Postar" uma vez                      │
+│  5. Resultado: thread conectada com imagem      │
+└─────────────────────────────────────────────────┘
+```
+
+### Thread Frameworks (4 tipos)
+
+| Framework | Descrição | Quando usar |
+|-----------|-----------|-------------|
+| `story` | Arco narrativo: setup → tensão → resolução | Histórias pessoais, jornadas |
+| `listicle` | Lista numerada de insights | Dicas, lições, descobertas |
+| `breakdown` | Explica tema complexo em partes | Educacional, análises |
+| `contrarian` | Desafia sabedoria convencional | Hot takes, opiniões fortes |
+
+### Estrutura de uma Thread
+
+```
+1/ Hook que para o scroll 🧵
+
+---
+
+2/ Contexto/Problema
+
+---
+
+3/ Insight principal
+
+---
+
+4/ Aplicação prática
+
+---
+
+5/ Conclusão + CTA + hashtags
+```
+
+### Arquivos do Sistema
+
+| Arquivo | Função |
+|---------|--------|
+| `src/claude-v2.js` | `generateThread()` e `generateBestThread()` |
+| `src/puppeteer-post.js` | `postThread()` - posta sequência de replies |
+| `scripts/auto-post-v2.js` | Integração com fluxo de postagem |
+| `scripts/test-thread.js` | Script de teste de threads |
+
+### Comandos
+
+```bash
+# Testar geração de thread (sem postar)
+node scripts/test-thread.js                  # Auto-seleciona melhor tópico
+node scripts/test-thread.js crypto en        # Tópico e idioma específicos
+node scripts/test-thread.js ai pt-BR         # Thread em português
+
+# Postar thread (cuidado!)
+node scripts/test-thread.js crypto en --post
+```
+
+### Configuração
+
+Em `scripts/auto-post-v2.js`:
+
+```javascript
+const THREAD_HOURS = [10, 18]  // Horários de thread (pico global e BR)
+const THREAD_LANGUAGE = 'en'   // Idioma das threads (en alcança mais)
+const THREAD_WITH_IMAGE = true // Gera imagem para primeiro tweet
+```
+
+### Fluxo de Postagem com Thread
+
+1. **Thread primeiro** (maior potencial de engajamento)
+2. **Imagem no 1º tweet** (para o scroll)
+3. **90s de delay** (evita flood)
+4. **Posts individuais** (8 posts normais)
+
+### Por que Threads Funcionam
+
+| Métrica | Post único | Thread 5 tweets |
+|---------|------------|-----------------|
+| Impressões médias | ~1K | ~5-50K |
+| Engajamento | 1-2% | 3-8% |
+| Salvamentos | Raro | Comum |
+| Compartilhamentos | Raro | Frequente |
+
+Threads contam uma história → pessoas leem até o fim → algoritmo promove.
+
+## Sistema de Geração de Imagens
+
+Imagens são geradas automaticamente para o primeiro tweet de cada thread usando a API do Gemini (Google).
+
+### API e Configuração
+
+| Config | Valor |
+|--------|-------|
+| **API** | Google Gemini (Nano Banana) |
+| **Modelo** | `gemini-2.0-flash-exp-image-generation` |
+| **Resolução** | 1024 x 574 (16:9) |
+| **Custo** | Grátis (tier gratuito) |
+| **Env var** | `GOOGLE_GEMINI_API_KEY` |
+
+### Como Funciona
+
+```
+Tweet Text + Topic
+       │
+       ▼
+┌─────────────────────────────┐
+│    generateImagePrompt()     │
+│                             │
+│  Analisa texto do tweet:    │
+│  - Bullish → verde/gold     │
+│  - Bearish → vermelho       │
+│  - Tópico → elementos       │
+│  - Estilo → cyberpunk/chart │
+└─────────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────┐
+│      Gemini API (Imagen)     │
+│                             │
+│  Gera imagem 1024x574       │
+│  Salva em /tmp/bot-x-images │
+└─────────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────┐
+│   uploadImageToComposer()    │
+│                             │
+│  Puppeteer faz upload       │
+│  no composer do X           │
+└─────────────────────────────┘
+```
+
+### Estilos de Imagem
+
+| Estilo | Uso | Resultado |
+|--------|-----|-----------|
+| `cyber` | Crypto, AI | Neon, futurista, dark |
+| `chart` | Investing | Data viz, infográfico |
+| `modern` | Geral | Clean, minimalista |
+| `abstract` | VibeCoding | Geométrico, gradientes |
+
+### Comandos
+
+```bash
+# Testar geração de imagem
+node src/image-generator.js
+
+# Testar thread com imagem (sem postar)
+node scripts/test-thread.js crypto en
+
+# Ver imagens geradas
+ls -la /tmp/bot-x-images/
+
+# Limpar imagens antigas
+rm /tmp/bot-x-images/*.png
+```
+
+### Arquivos
+
+| Arquivo | Função |
+|---------|--------|
+| `src/image-generator.js` | `generateImage()`, `generateImagePrompt()` |
+| `src/puppeteer-post.js` | `uploadImageToComposer()`, `postTweetWithImage()` |
+
 ## Notas de Desenvolvimento
 
 - Posts max 500 chars
@@ -847,6 +1048,7 @@ Sempre logar no puppeteer-post.js:
 3. Se texto < 80% do esperado, avisar antes de postar
 
 ## Historico de Commits
+- **2026-02-04 21:14** [`9178ea2`] Improve posting reliability + disable Reply Monitor (.claude/CLAUDE.md,scripts/cron-daemon-v2.js,src/puppeteer-post.js,src/reply-monitor.js)
 - **2026-02-04 20:57** Disable Reply Monitor, focus on posts + analytics + goals
 - **2026-02-04 18:30** Improve puppeteer-post.js: better tab handling, context error recovery, retry logic
 - **2026-02-04 15:33** [`dc694f2`] Add Reply Monitor: auto-respond to comments with Claude (.claude/CLAUDE.md,scripts/cron-daemon-v2.js,src/reply-monitor.js)

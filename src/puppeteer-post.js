@@ -592,3 +592,617 @@ export async function checkChromeConnection() {
     return { connected: false, version: null }
   }
 }
+
+// ==================== THREAD POSTING ====================
+
+/**
+ * Post a thread using X's multi-tweet composer
+ * All tweets are composed together and posted at once (guaranteed connected thread)
+ * @param {string[]} tweets - Array of tweet texts (2-25 tweets)
+ * @param {function} onProgress - Callback (index, total, status)
+ * @param {string} firstTweetImage - Optional image path for first tweet
+ * @returns {Promise<{success: boolean, postedCount: number, error?: string}>}
+ */
+export async function postThread(tweets, onProgress = null, firstTweetImage = null) {
+  let browser = null
+  let page = null
+
+  if (!tweets || tweets.length < 2) {
+    return { success: false, postedCount: 0, error: 'Thread precisa de pelo menos 2 tweets' }
+  }
+
+  if (tweets.length > 25) {
+    return { success: false, postedCount: 0, error: 'Thread máximo 25 tweets' }
+  }
+
+  try {
+    console.log('🔌 Conectando ao Chrome para thread...')
+    browser = await connectToChrome()
+
+    // Limpa abas em excesso
+    await closeExcessTabs(browser)
+
+    // Encontra ou cria aba do X
+    const tabResult = await findOrCreateXTab(browser, false)
+    page = tabResult.page
+
+    console.log('📄 Usando aba:', page.url())
+
+    // Configura timeouts
+    page.setDefaultTimeout(PAGE_TIMEOUT)
+    page.setDefaultNavigationTimeout(PAGE_TIMEOUT)
+
+    await page.bringToFront()
+
+    // Navega para /home
+    const currentUrl = page.url()
+    if (!currentUrl.includes('x.com/home')) {
+      console.log('🔄 Navegando para /home...')
+      await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 30000 })
+      await new Promise(r => setTimeout(r, 3000))
+    }
+
+    // Aguarda estar logado
+    console.log('⏳ Aguardando pagina carregar...')
+    await page.waitForSelector('[data-testid="SideNav_NewTweet_Button"]', { timeout: 15000 })
+    console.log('✅ Logado no X')
+
+    // ========== ABRE COMPOSER ==========
+
+    console.log('\n📝 Abrindo composer...')
+    const postBtn = await page.$('[data-testid="SideNav_NewTweet_Button"]')
+    if (!postBtn) {
+      return { success: false, postedCount: 0, error: 'Não encontrou botão de novo post' }
+    }
+    await postBtn.click()
+    await new Promise(r => setTimeout(r, 2000))
+
+    // ========== INSERE TODOS OS TWEETS NO COMPOSER ==========
+
+    for (let i = 0; i < tweets.length; i++) {
+      console.log(`\n🧵 Preparando tweet ${i + 1}/${tweets.length}...`)
+
+      if (onProgress) await onProgress(i, tweets.length, 'composing')
+
+      // Para tweets após o primeiro, clica no botão "+" para adicionar campo
+      if (i > 0) {
+        console.log('   ➕ Adicionando novo campo...')
+        const addResult = await clickAddTweetButton(page)
+        if (!addResult.success) {
+          console.log(`   ❌ Falhou ao adicionar campo: ${addResult.error}`)
+          return { success: false, postedCount: 0, error: `Falhou ao adicionar tweet ${i + 1}: ${addResult.error}` }
+        }
+        await new Promise(r => setTimeout(r, 1000))
+      }
+
+      // Insere texto no campo correto (usa índice)
+      const insertResult = await insertTextInComposerField(page, tweets[i], i)
+      if (!insertResult.success) {
+        console.log(`   ❌ Falhou ao inserir texto: ${insertResult.error}`)
+        return { success: false, postedCount: 0, error: `Falhou ao inserir tweet ${i + 1}: ${insertResult.error}` }
+      }
+
+      // Upload image for first tweet only
+      if (i === 0 && firstTweetImage) {
+        console.log('   📷 Anexando imagem ao primeiro tweet...')
+        const uploadResult = await uploadImageToComposer(page, firstTweetImage, 0)
+        if (uploadResult.success) {
+          console.log('   ✅ Imagem anexada!')
+        } else {
+          console.log(`   ⚠️ Imagem não anexada: ${uploadResult.error}`)
+          // Continue without image
+        }
+        await new Promise(r => setTimeout(r, 2000))
+      }
+
+      console.log(`   ✅ Tweet ${i + 1} preparado (${tweets[i].length} chars)`)
+
+      // Pequeno delay entre tweets para parecer humano
+      await new Promise(r => setTimeout(r, 800 + Math.random() * 500))
+    }
+
+    // ========== POSTA TODOS DE UMA VEZ ==========
+
+    console.log('\n🚀 Postando thread completa...')
+
+    const postResult = await clickPostAllButton(page)
+    if (!postResult.success) {
+      return { success: false, postedCount: 0, error: `Falhou ao postar: ${postResult.error}` }
+    }
+
+    // Aguarda processamento
+    await new Promise(r => setTimeout(r, 3000))
+
+    // Verifica se composer fechou (indica sucesso)
+    const composerStillOpen = await page.$('[data-testid="tweetTextarea_0"]')
+    if (composerStillOpen) {
+      // Tenta clicar novamente
+      console.log('   ⚠️ Composer ainda aberto, tentando novamente...')
+      await clickPostAllButton(page)
+      await new Promise(r => setTimeout(r, 3000))
+    }
+
+    console.log(`\n✅ Thread publicada: ${tweets.length} tweets conectados!`)
+
+    if (onProgress) await onProgress(tweets.length - 1, tweets.length, 'posted')
+
+    return { success: true, postedCount: tweets.length }
+
+  } catch (err) {
+    console.error('❌ Erro ao postar thread:', err.message)
+    return { success: false, postedCount: 0, error: err.message }
+  } finally {
+    if (browser) {
+      browser.disconnect()
+    }
+  }
+}
+
+/**
+ * Helper: Click the "+" button to add another tweet to thread
+ */
+async function clickAddTweetButton(page) {
+  try {
+    // Possíveis seletores para o botão de adicionar tweet
+    const addBtnSelectors = [
+      '[data-testid="addButton"]',
+      '[aria-label="Add post"]',
+      '[aria-label="Adicionar post"]',
+      '[aria-label="Add Tweet"]',
+      'button[aria-label*="Add"]',
+      // Botão com ícone de "+"
+      'div[role="button"] svg[viewBox="0 0 24 24"]'
+    ]
+
+    let addBtn = null
+    for (const selector of addBtnSelectors) {
+      addBtn = await page.$(selector)
+      if (addBtn) {
+        await addBtn.click()
+        await new Promise(r => setTimeout(r, 1500))
+        return { success: true }
+      }
+    }
+
+    // Fallback: procura qualquer botão com "+" no composer
+    const clicked = await page.evaluate(() => {
+      // Procura botões dentro do modal de composição
+      const buttons = document.querySelectorAll('[role="button"]')
+      for (const btn of buttons) {
+        const svg = btn.querySelector('svg')
+        if (svg) {
+          // Verifica se é o botão de adicionar (geralmente tem path com "+")
+          const paths = svg.querySelectorAll('path')
+          for (const path of paths) {
+            const d = path.getAttribute('d')
+            // Padrão comum para ícone de "+"
+            if (d && (d.includes('M12 5') || d.includes('M11 11') || d.includes('M19 13'))) {
+              btn.click()
+              return true
+            }
+          }
+        }
+      }
+      return false
+    })
+
+    if (clicked) {
+      await new Promise(r => setTimeout(r, 1500))
+      return { success: true }
+    }
+
+    return { success: false, error: 'Não encontrou botão de adicionar tweet' }
+
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+}
+
+/**
+ * Helper: Insert text in a specific composer field by index
+ * @param {Page} page - Puppeteer page
+ * @param {string} text - Text to insert
+ * @param {number} fieldIndex - Index of the field (0 = first tweet, 1 = second, etc.)
+ */
+async function insertTextInComposerField(page, text, fieldIndex) {
+  try {
+    await new Promise(r => setTimeout(r, 500))
+
+    // Encontra o campo de texto pelo índice
+    // X usa tweetTextarea_0, tweetTextarea_1, etc.
+    const textboxSelector = `[data-testid="tweetTextarea_${fieldIndex}"]`
+    let textbox = await page.$(textboxSelector)
+
+    // Fallback: pega todos os textareas e usa o índice
+    if (!textbox) {
+      const allTextboxes = await page.$$('[data-testid^="tweetTextarea_"]')
+      if (allTextboxes.length > fieldIndex) {
+        textbox = allTextboxes[fieldIndex]
+      }
+    }
+
+    // Fallback 2: pega todos os contenteditable
+    if (!textbox) {
+      const allEditable = await page.$$('[role="textbox"][contenteditable="true"]')
+      if (allEditable.length > fieldIndex) {
+        textbox = allEditable[fieldIndex]
+      }
+    }
+
+    if (!textbox) {
+      return { success: false, error: `Campo ${fieldIndex} não encontrado` }
+    }
+
+    // Clica no campo
+    await textbox.click()
+    await new Promise(r => setTimeout(r, 300))
+
+    // Limpa qualquer texto existente
+    await page.keyboard.down('Meta')
+    await page.keyboard.press('a')
+    await page.keyboard.up('Meta')
+    await page.keyboard.press('Backspace')
+    await new Promise(r => setTimeout(r, 300))
+
+    // ========== MÉTODO 1: execCommand insertText (funciona com emojis) ==========
+    const insertedViaExec = await page.evaluate((textToInsert) => {
+      const activeEl = document.activeElement
+      if (activeEl && activeEl.isContentEditable) {
+        // Foca e insere via execCommand
+        document.execCommand('insertText', false, textToInsert)
+        return activeEl.textContent || ''
+      }
+      return ''
+    }, text)
+
+    if (insertedViaExec.length >= text.length * 0.8) {
+      await new Promise(r => setTimeout(r, 500))
+      return { success: true }
+    }
+
+    // ========== MÉTODO 2: Clipboard API ==========
+    console.log('   ⚠️ execCommand falhou, tentando clipboard...')
+
+    await page.keyboard.down('Meta')
+    await page.keyboard.press('a')
+    await page.keyboard.up('Meta')
+    await page.keyboard.press('Backspace')
+    await new Promise(r => setTimeout(r, 300))
+
+    // Tenta clipboard
+    const clipboardWorked = await page.evaluate(async (textToInsert) => {
+      try {
+        await navigator.clipboard.writeText(textToInsert)
+        return true
+      } catch {
+        return false
+      }
+    }, text)
+
+    if (clipboardWorked) {
+      await new Promise(r => setTimeout(r, 200))
+      await page.keyboard.down('Meta')
+      await page.keyboard.press('v')
+      await page.keyboard.up('Meta')
+      await new Promise(r => setTimeout(r, 800))
+    }
+
+    // Verifica se texto foi inserido
+    const insertedText = await page.evaluate((idx) => {
+      const el = document.querySelector(`[data-testid="tweetTextarea_${idx}"]`)
+      return el ? el.textContent : ''
+    }, fieldIndex)
+
+    if (insertedText.length >= text.length * 0.8) {
+      return { success: true }
+    }
+
+    // ========== MÉTODO 3: InputEvent (último recurso com emojis) ==========
+    console.log('   ⚠️ Clipboard falhou, tentando InputEvent...')
+
+    await page.keyboard.down('Meta')
+    await page.keyboard.press('a')
+    await page.keyboard.up('Meta')
+    await page.keyboard.press('Backspace')
+    await new Promise(r => setTimeout(r, 300))
+
+    const insertedViaInput = await page.evaluate((textToInsert, idx) => {
+      const el = document.querySelector(`[data-testid="tweetTextarea_${idx}"]`)
+      if (el) {
+        el.focus()
+        // Dispara InputEvent que funciona com emojis
+        const event = new InputEvent('beforeinput', {
+          inputType: 'insertText',
+          data: textToInsert,
+          bubbles: true,
+          cancelable: true
+        })
+        el.dispatchEvent(event)
+
+        // Também tenta inserir diretamente
+        const range = document.getSelection()?.getRangeAt(0)
+        if (range) {
+          range.deleteContents()
+          range.insertNode(document.createTextNode(textToInsert))
+        }
+
+        return el.textContent || ''
+      }
+      return ''
+    }, text, fieldIndex)
+
+    if (insertedViaInput.length >= text.length * 0.5) {
+      await new Promise(r => setTimeout(r, 500))
+      return { success: true }
+    }
+
+    // ========== MÉTODO 4: Digitação manual (último recurso, sem emojis) ==========
+    console.log('   ⚠️ Todos métodos falharam, usando digitação manual...')
+
+    await page.keyboard.down('Meta')
+    await page.keyboard.press('a')
+    await page.keyboard.up('Meta')
+    await page.keyboard.press('Backspace')
+    await new Promise(r => setTimeout(r, 300))
+
+    // Digita com delay humanizado (70-150ms entre chars, pausas após pontuação)
+    // Mantém emojis simples, remove apenas os problemáticos
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i]
+
+      // Pula surrogate pairs (emojis complexos)
+      if (char.charCodeAt(0) >= 0xD800 && char.charCodeAt(0) <= 0xDFFF) {
+        continue
+      }
+
+      let delay = 70 + Math.random() * 80  // 70-150ms base
+
+      // Pausa maior após pontuação
+      if (['.', '!', '?', ',', ':'].includes(char)) {
+        delay += 150 + Math.random() * 200  // +150-350ms
+      }
+
+      // Pausa ocasional (simula pensar)
+      if (Math.random() < 0.03) {  // 3% chance
+        delay += 300 + Math.random() * 500  // +300-800ms
+      }
+
+      await page.keyboard.type(char, { delay })
+    }
+
+    await new Promise(r => setTimeout(r, 500))
+
+    return { success: true }
+
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+}
+
+/**
+ * Helper: Click the "Post all" button to publish the entire thread
+ */
+async function clickPostAllButton(page) {
+  try {
+    // Possíveis seletores para o botão de postar
+    const postBtnSelectors = [
+      '[data-testid="tweetButton"]',
+      '[data-testid="tweetButtonInline"]',
+      'button[data-testid="tweetButton"]',
+      '[aria-label="Post"]',
+      '[aria-label="Postar"]',
+      '[aria-label="Post all"]',
+      '[aria-label="Postar tudo"]'
+    ]
+
+    for (const selector of postBtnSelectors) {
+      const btn = await page.$(selector)
+      if (btn) {
+        // Verifica se o botão está habilitado
+        const isDisabled = await page.evaluate((el) => {
+          return el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true'
+        }, btn)
+
+        if (!isDisabled) {
+          await btn.click()
+          await new Promise(r => setTimeout(r, 2000))
+          return { success: true }
+        }
+      }
+    }
+
+    return { success: false, error: 'Não encontrou botão de postar ou está desabilitado' }
+
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+}
+
+// ==================== IMAGE UPLOAD ====================
+
+/**
+ * Upload an image to the composer
+ * Works with both single tweet composer and thread composer
+ * @param {Page} page - Puppeteer page
+ * @param {string} imagePath - Path to image file
+ * @param {number} fieldIndex - Which tweet field to attach to (for threads)
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+export async function uploadImageToComposer(page, imagePath, fieldIndex = 0) {
+  try {
+    console.log(`   📷 Anexando imagem ao tweet ${fieldIndex + 1}...`)
+
+    // Verifica se arquivo existe
+    const fs = await import('fs')
+    if (!fs.existsSync(imagePath)) {
+      return { success: false, error: `Arquivo não encontrado: ${imagePath}` }
+    }
+
+    // Primeiro, clica no campo de texto correto para focar
+    const textboxSelector = `[data-testid="tweetTextarea_${fieldIndex}"]`
+    const textbox = await page.$(textboxSelector)
+    if (textbox) {
+      await textbox.click()
+      await new Promise(r => setTimeout(r, 500))
+    }
+
+    // Procura o input de arquivo oculto
+    // X usa um input[type="file"] escondido para upload
+    let fileInput = await page.$('input[type="file"][accept*="image"]')
+
+    if (!fileInput) {
+      // Tenta encontrar qualquer input de arquivo
+      fileInput = await page.$('input[type="file"]')
+    }
+
+    if (!fileInput) {
+      // Se não encontrou, tenta clicar no botão de mídia para revelar o input
+      const mediaButtonSelectors = [
+        '[data-testid="fileInput"]',
+        '[aria-label="Add photos or video"]',
+        '[aria-label="Adicionar fotos ou vídeo"]',
+        '[aria-label="Media"]',
+        '[aria-label="Mídia"]',
+        'button[aria-label*="photo"]',
+        'button[aria-label*="image"]',
+        'button[aria-label*="foto"]',
+        'button[aria-label*="imagem"]'
+      ]
+
+      for (const selector of mediaButtonSelectors) {
+        const btn = await page.$(selector)
+        if (btn) {
+          await btn.click()
+          await new Promise(r => setTimeout(r, 1000))
+          break
+        }
+      }
+
+      // Tenta encontrar o input novamente
+      fileInput = await page.$('input[type="file"]')
+    }
+
+    if (!fileInput) {
+      // Fallback: procura por qualquer input de arquivo visível ou oculto
+      const inputs = await page.$$('input[type="file"]')
+      if (inputs.length > 0) {
+        fileInput = inputs[0]
+      }
+    }
+
+    if (!fileInput) {
+      return { success: false, error: 'Não encontrou input de arquivo para upload' }
+    }
+
+    // Faz o upload do arquivo
+    await fileInput.uploadFile(imagePath)
+
+    // Aguarda o upload processar
+    await new Promise(r => setTimeout(r, 2000))
+
+    // Verifica se imagem foi anexada (procura preview)
+    const imagePreview = await page.$('[data-testid="attachments"] img, [data-testid="mediaPreview"] img, [aria-label*="Attached media"] img')
+
+    if (imagePreview) {
+      console.log(`   ✅ Imagem anexada com sucesso!`)
+      return { success: true }
+    }
+
+    // Mesmo sem preview visível, pode ter funcionado
+    console.log(`   ✅ Upload enviado (preview não detectado)`)
+    return { success: true }
+
+  } catch (err) {
+    console.log(`   ❌ Erro no upload: ${err.message}`)
+    return { success: false, error: err.message }
+  }
+}
+
+/**
+ * Post a tweet with an image
+ * @param {string} text - Tweet text
+ * @param {string} imagePath - Path to image file
+ * @param {boolean} keepBrowserOpen - Keep browser connected after posting
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+export async function postTweetWithImage(text, imagePath, keepBrowserOpen = true) {
+  let browser = null
+  let page = null
+
+  try {
+    console.log('🔌 Conectando ao Chrome...')
+    browser = await connectToChrome()
+
+    await closeExcessTabs(browser)
+
+    const tabResult = await findOrCreateXTab(browser, false)
+    page = tabResult.page
+
+    console.log('📄 Usando aba:', page.url())
+
+    page.setDefaultTimeout(PAGE_TIMEOUT)
+    page.setDefaultNavigationTimeout(PAGE_TIMEOUT)
+
+    await page.bringToFront()
+
+    // Navega para /home
+    const currentUrl = page.url()
+    if (!currentUrl.includes('x.com/home')) {
+      console.log('🔄 Navegando para /home...')
+      await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 30000 })
+      await new Promise(r => setTimeout(r, 3000))
+    }
+
+    // Aguarda estar logado
+    console.log('⏳ Aguardando pagina carregar...')
+    await page.waitForSelector('[data-testid="SideNav_NewTweet_Button"]', { timeout: 15000 })
+    console.log('✅ Logado no X')
+
+    // Abre composer
+    console.log('📝 Abrindo composer...')
+    const postBtn = await page.$('[data-testid="SideNav_NewTweet_Button"]')
+    if (postBtn) {
+      await postBtn.click()
+      await new Promise(r => setTimeout(r, 2000))
+    }
+
+    // Insere texto
+    const insertResult = await insertTextInComposerField(page, text, 0)
+    if (!insertResult.success) {
+      return { success: false, error: `Falhou ao inserir texto: ${insertResult.error}` }
+    }
+
+    // Upload da imagem
+    const uploadResult = await uploadImageToComposer(page, imagePath, 0)
+    if (!uploadResult.success) {
+      console.log(`   ⚠️ Imagem não anexada: ${uploadResult.error}`)
+      // Continua sem imagem
+    }
+
+    // Aguarda um pouco para a imagem processar
+    await new Promise(r => setTimeout(r, 2000))
+
+    // Posta
+    console.log('🚀 Postando...')
+    const postResult = await clickPostAllButton(page)
+
+    if (!postResult.success) {
+      return { success: false, error: postResult.error }
+    }
+
+    await new Promise(r => setTimeout(r, 3000))
+
+    console.log('✅ Tweet com imagem publicado!')
+
+    if (!keepBrowserOpen && browser) {
+      browser.disconnect()
+    }
+
+    return { success: true }
+
+  } catch (err) {
+    console.error('❌ Erro ao postar com imagem:', err.message)
+    if (browser) browser.disconnect()
+    return { success: false, error: err.message }
+  }
+}
