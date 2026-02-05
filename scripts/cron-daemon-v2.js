@@ -26,6 +26,35 @@ import path from 'path'
 const TIMEZONE = 'America/Sao_Paulo'
 const PIDFILE = path.join(process.cwd(), 'logs', 'daemon-v2.pid')
 
+// ==================== ANTI-SUSPENSION HEARTBEAT ====================
+// macOS suspends background processes when screen is locked
+// This heartbeat keeps the process active
+
+const HEARTBEAT_INTERVAL = 5 * 60 * 1000 // 5 minutes
+let heartbeatCount = 0
+let lastHeartbeat = Date.now()
+
+function startHeartbeat() {
+  setInterval(() => {
+    heartbeatCount++
+    lastHeartbeat = Date.now()
+
+    // Small I/O activity to prevent suspension
+    const heartbeatFile = path.join(process.cwd(), 'logs', '.heartbeat')
+    try {
+      fs.writeFileSync(heartbeatFile, `${Date.now()}\n${heartbeatCount}`)
+    } catch {}
+
+    // Log every 30 minutes (6 heartbeats)
+    if (heartbeatCount % 6 === 0) {
+      const now = new Date().toLocaleString('pt-BR', { timeZone: TIMEZONE })
+      console.log(`[HEARTBEAT] ${now} - alive (${heartbeatCount} beats)`)
+    }
+  }, HEARTBEAT_INTERVAL)
+
+  console.log(`[HEARTBEAT] Anti-suspension heartbeat started (every ${HEARTBEAT_INTERVAL / 60000}min)`)
+}
+
 // ==================== DEFAULT SCHEDULE ====================
 
 // Every 2 hours from 8h to 22h + 23h (9 slots)
@@ -296,6 +325,9 @@ const REPLY_MONITOR = {
 // Initialize schedule
 let scheduleInfo = loadSchedule()
 currentSchedule = scheduleInfo.schedule
+
+// Start anti-suspension heartbeat
+startHeartbeat()
 
 console.log('[BOT] Bot-X-Posts Daemon V2 (Multi-Source Bilingual + Learning)')
 console.log('='.repeat(60))

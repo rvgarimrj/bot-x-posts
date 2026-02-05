@@ -86,7 +86,8 @@ Cron (8h,10h,12h,14h,16h,18h,20h,22h,23h - Daily)
 ### V2 (Novo - Multi-Source Bilingual + Threads + Images)
 | Arquivo | Funcao |
 |---------|--------|
-| `scripts/cron-daemon-v2.js` | Daemon V2: 9 horarios + reply monitor + learning |
+| `scripts/cron-daemon-v2.js` | Daemon V2: 9 horarios + heartbeat anti-suspensao |
+| `scripts/daemon-wrapper.sh` | Wrapper com caffeinate -i (impede idle sleep) |
 | `scripts/auto-post-v2.js` | Fluxo V2: 8 posts + thread com imagem (10h/18h) |
 | `scripts/daily-learning.js` | Ciclo de aprendizado diario (23:59) |
 | `src/curate-v3.js` | Curadoria multi-fonte com fallback chains |
@@ -310,13 +311,16 @@ node scripts/daily-learning.js
 # Ver logs em tempo real
 tail -f logs/daemon-v2.log
 
-# Reiniciar daemon V2
-pkill -9 -f "cron-daemon-v2"
-nohup node scripts/cron-daemon-v2.js > logs/daemon-v2.log 2>&1 &
+# Reiniciar daemon V2 (via launchctl - RECOMENDADO)
+launchctl unload ~/Library/LaunchAgents/com.botxposts.daemon.plist
+launchctl load ~/Library/LaunchAgents/com.botxposts.daemon.plist
 
-# Verificar PID
+# Verificar se daemon + caffeinate estao rodando
+ps aux | grep -E "(caffeinate|cron-daemon)" | grep -v grep
+
+# Verificar PID e status do LaunchAgent
 cat logs/daemon-v2.pid
-ps aux | grep cron-daemon-v2
+launchctl list | grep botxposts
 
 # ===== V1 (Legacy) =====
 
@@ -359,6 +363,7 @@ cat data/replies-log.json | jq '.stats'
 | Twitter rate limit | Muitas requisicoes | Cache de 15 min, fallback |
 | Post truncado (so ultimo paragrafo) | execCommand em chunks sobrescreve | Usar clipboard (Cmd+V) |
 | Daemon crash silencioso | `.catch()` em funcao sync | Usar try/catch para unlinkSync |
+| Daemon suspenso (TN status) | macOS suspende processo com tela bloqueada | Wrapper caffeinate -i + heartbeat interno + KeepAlive:true |
 
 ## Fluxo de Postagem (V2)
 
@@ -1048,6 +1053,7 @@ Sempre logar no puppeteer-post.js:
 3. Se texto < 80% do esperado, avisar antes de postar
 
 ## Historico de Commits
+- **2026-02-05 11:06** [`fd439c6`] Update CLAUDE.md with commit history (.claude/CLAUDE.md)
 - **2026-02-05 10:59** [`9634221`] Add Thread System with AI-generated Images (Gemini) (.claude/CLAUDE.md,scripts/auto-post-v2.js,scripts/test-thread.js,src/claude-v2.js,src/image-generator.js)
 - **2026-02-04 21:14** [`9178ea2`] Improve posting reliability + disable Reply Monitor (.claude/CLAUDE.md,scripts/cron-daemon-v2.js,src/puppeteer-post.js,src/reply-monitor.js)
 - **2026-02-04 20:57** Disable Reply Monitor, focus on posts + analytics + goals
