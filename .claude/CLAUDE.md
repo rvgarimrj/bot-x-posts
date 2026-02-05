@@ -1048,6 +1048,7 @@ Sempre logar no puppeteer-post.js:
 3. Se texto < 80% do esperado, avisar antes de postar
 
 ## Historico de Commits
+- **2026-02-05 10:59** [`9634221`] Add Thread System with AI-generated Images (Gemini) (.claude/CLAUDE.md,scripts/auto-post-v2.js,scripts/test-thread.js,src/claude-v2.js,src/image-generator.js)
 - **2026-02-04 21:14** [`9178ea2`] Improve posting reliability + disable Reply Monitor (.claude/CLAUDE.md,scripts/cron-daemon-v2.js,src/puppeteer-post.js,src/reply-monitor.js)
 - **2026-02-04 20:57** Disable Reply Monitor, focus on posts + analytics + goals
 - **2026-02-04 18:30** Improve puppeteer-post.js: better tab handling, context error recovery, retry logic
