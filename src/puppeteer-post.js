@@ -860,8 +860,8 @@ async function insertTextInComposerField(page, text, fieldIndex) {
       return { success: true }
     }
 
-    // ========== MÉTODO 2: Clipboard API ==========
-    console.log('   ⚠️ execCommand falhou, tentando clipboard...')
+    // ========== MÉTODO 2: Clipboard via textarea (mais confiável) ==========
+    console.log('   ⚠️ execCommand falhou, tentando clipboard via textarea...')
 
     await page.keyboard.down('Meta')
     await page.keyboard.press('a')
@@ -869,17 +869,29 @@ async function insertTextInComposerField(page, text, fieldIndex) {
     await page.keyboard.press('Backspace')
     await new Promise(r => setTimeout(r, 300))
 
-    // Tenta clipboard
-    const clipboardWorked = await page.evaluate(async (textToInsert) => {
+    // Usa textarea oculto para copiar (funciona melhor que navigator.clipboard)
+    const clipboardWorked = await page.evaluate((textToInsert) => {
       try {
-        await navigator.clipboard.writeText(textToInsert)
-        return true
+        const temp = document.createElement('textarea')
+        temp.value = textToInsert
+        temp.style.position = 'fixed'
+        temp.style.left = '-9999px'
+        temp.style.top = '-9999px'
+        temp.style.opacity = '0'
+        document.body.appendChild(temp)
+        temp.select()
+        temp.setSelectionRange(0, textToInsert.length)
+        const success = document.execCommand('copy')
+        document.body.removeChild(temp)
+        return success
       } catch {
         return false
       }
     }, text)
 
     if (clipboardWorked) {
+      // Volta o foco para o campo de texto
+      await textbox.click()
       await new Promise(r => setTimeout(r, 200))
       await page.keyboard.down('Meta')
       await page.keyboard.press('v')
@@ -936,8 +948,8 @@ async function insertTextInComposerField(page, text, fieldIndex) {
       return { success: true }
     }
 
-    // ========== MÉTODO 4: Digitação manual (último recurso, sem emojis) ==========
-    console.log('   ⚠️ Todos métodos falharam, usando digitação manual...')
+    // ========== MÉTODO 4: Digitação manual com suporte a emojis ==========
+    console.log('   ⚠️ Todos métodos falharam, usando digitação manual com emojis...')
 
     await page.keyboard.down('Meta')
     await page.keyboard.press('a')
@@ -945,29 +957,72 @@ async function insertTextInComposerField(page, text, fieldIndex) {
     await page.keyboard.press('Backspace')
     await new Promise(r => setTimeout(r, 300))
 
-    // Digita com delay humanizado (70-150ms entre chars, pausas após pontuação)
-    // Mantém emojis simples, remove apenas os problemáticos
-    for (let i = 0; i < text.length; i++) {
-      const char = text[i]
+    // Separa texto em segmentos: texto normal e emojis
+    // Usa Array.from() para iterar por code points completos (não surrogate pairs)
+    const segments = []
+    let currentText = ''
 
-      // Pula surrogate pairs (emojis complexos)
-      if (char.charCodeAt(0) >= 0xD800 && char.charCodeAt(0) <= 0xDFFF) {
-        continue
+    for (const char of text) {  // Iteração por code points
+      const codePoint = char.codePointAt(0)
+
+      // Verifica se é emoji (acima de U+1F000 ou em ranges de emoji)
+      const isEmoji = codePoint > 0x1F000 ||
+                      (codePoint >= 0x2600 && codePoint <= 0x27BF) ||  // Misc symbols
+                      (codePoint >= 0x1F300 && codePoint <= 0x1F9FF)   // Emoji range
+
+      if (isEmoji) {
+        if (currentText) {
+          segments.push({ type: 'text', content: currentText })
+          currentText = ''
+        }
+        segments.push({ type: 'emoji', content: char })
+      } else {
+        currentText += char
       }
+    }
+    if (currentText) {
+      segments.push({ type: 'text', content: currentText })
+    }
 
-      let delay = 70 + Math.random() * 80  // 70-150ms base
+    // Processa cada segmento
+    for (const segment of segments) {
+      if (segment.type === 'text') {
+        // Digita texto com delay humanizado
+        for (const char of segment.content) {
+          let delay = 70 + Math.random() * 80  // 70-150ms base
 
-      // Pausa maior após pontuação
-      if (['.', '!', '?', ',', ':'].includes(char)) {
-        delay += 150 + Math.random() * 200  // +150-350ms
+          // Pausa maior após pontuação
+          if (['.', '!', '?', ',', ':'].includes(char)) {
+            delay += 150 + Math.random() * 200  // +150-350ms
+          }
+
+          // Pausa ocasional (simula pensar)
+          if (Math.random() < 0.03) {  // 3% chance
+            delay += 300 + Math.random() * 500  // +300-800ms
+          }
+
+          await page.keyboard.type(char, { delay })
+        }
+      } else {
+        // Para emojis, usa clipboard (mais confiável)
+        await page.evaluate(async (emoji) => {
+          // Cria elemento temporário para copiar
+          const temp = document.createElement('textarea')
+          temp.value = emoji
+          temp.style.position = 'fixed'
+          temp.style.opacity = '0'
+          document.body.appendChild(temp)
+          temp.select()
+          document.execCommand('copy')
+          document.body.removeChild(temp)
+        }, segment.content)
+
+        await new Promise(r => setTimeout(r, 100))
+        await page.keyboard.down('Meta')
+        await page.keyboard.press('v')
+        await page.keyboard.up('Meta')
+        await new Promise(r => setTimeout(r, 200))
       }
-
-      // Pausa ocasional (simula pensar)
-      if (Math.random() < 0.03) {  // 3% chance
-        delay += 300 + Math.random() * 500  // +300-800ms
-      }
-
-      await page.keyboard.type(char, { delay })
     }
 
     await new Promise(r => setTimeout(r, 500))
