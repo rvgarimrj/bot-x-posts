@@ -74,9 +74,10 @@ Cron (8h,10h,12h,14h,16h,18h,20h,22h,23h - Daily)
 
 | Horario | Funcao |
 |---------|--------|
-| A cada hora (:30) | Reply Monitor - responde comentarios |
 | 00:01 | Health Check |
 | 23:59 | Daily Learning - analise + ajuste de pesos + relatorio |
+
+> **Nota:** Reply Monitor está DESATIVADO. Foco atual: posts + analytics + metas.
 
 ## Arquivos Principais
 
@@ -722,9 +723,12 @@ O sistema V2 e **retro-compativel** com V1:
 - Comandos V1 (`npm run start`, `npm run analyze`) continuam funcionando
 - Daemon V1 pode coexistir com V2 (mas recomenda-se usar apenas V2)
 
-## Reply Monitor (Resposta Automatica a Comentarios)
+## Reply Monitor (DESATIVADO)
+
+> **Status:** DESATIVADO - Foco atual em posts + analytics + metas de monetização.
 
 Sistema que monitora mencoes e comentarios nos posts, gerando respostas humanizadas com Claude.
+O código está pronto em `src/reply-monitor.js` mas não está sendo executado pelo daemon.
 
 ### Arquivos
 | Arquivo | Funcao |
@@ -843,6 +847,9 @@ Sempre logar no puppeteer-post.js:
 3. Se texto < 80% do esperado, avisar antes de postar
 
 ## Historico de Commits
+- **2026-02-04 20:57** Disable Reply Monitor, focus on posts + analytics + goals
+- **2026-02-04 18:30** Improve puppeteer-post.js: better tab handling, context error recovery, retry logic
+- **2026-02-04 15:33** [`dc694f2`] Add Reply Monitor: auto-respond to comments with Claude (.claude/CLAUDE.md,scripts/cron-daemon-v2.js,src/reply-monitor.js)
 - **2026-02-04 13:27** Add Reply Monitor: auto-respond to comments with Claude (src/reply-monitor.js, scripts/cron-daemon-v2.js, .claude/CLAUDE.md)
 - **2026-02-04 10:30** [`4a000b5`] Update schedule: post every 2h from 8h to 23h (72 posts/day) (scripts/cron-daemon-v2.js)
 - **2026-02-04 10:20** [`6c85cc1`] Add Self-Learning V2 System with Goals Tracking (.claude/CLAUDE.md,data/GOALS.md,package.json,scripts/cron-daemon-v2.js,scripts/daemon-manager.js)

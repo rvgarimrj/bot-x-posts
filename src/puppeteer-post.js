@@ -16,10 +16,49 @@ const DELAY_BETWEEN_POSTS_MS = 60000  // 60 segundos
 
 // Configurações de timeout e retry
 const MAX_CONNECTION_RETRIES = 3
+const MAX_POST_RETRIES = 3  // Retries para postagem
 const RETRY_DELAY_MS = 5000
 const PROTOCOL_TIMEOUT = 120000  // 2 minutos
 const PAGE_TIMEOUT = 60000  // 1 minuto
 const MAX_TABS = 5  // Maximo de abas antes de limpar
+
+// URLs problemáticas do X que devem ser evitadas
+const PROBLEMATIC_URLS = [
+  '/search',
+  '/explore',
+  '/compose',
+  '/i/flow',
+  '/i/jf',
+  '/settings',
+  '/messages',
+  '/notifications',
+  '/login',
+  'creators/inspiration'
+]
+
+// Erros que indicam contexto destruído (precisa nova aba)
+const CONTEXT_ERRORS = [
+  'Execution context was destroyed',
+  'detached Frame',
+  'Target closed',
+  'Session closed',
+  'Protocol error',
+  'Cannot find context'
+]
+
+/**
+ * Verifica se URL é problemática (search, compose, etc.)
+ */
+function isProblematicUrl(url) {
+  return PROBLEMATIC_URLS.some(pattern => url.includes(pattern))
+}
+
+/**
+ * Verifica se erro indica contexto destruído
+ */
+function isContextError(errorMessage) {
+  return CONTEXT_ERRORS.some(pattern => errorMessage.includes(pattern))
+}
 
 /**
  * Conecta ao Chrome com retry automático
@@ -79,6 +118,83 @@ async function closeExcessTabs(browser) {
 }
 
 /**
+ * Encontra a melhor aba do X ou cria uma nova
+ * Prioriza: /home > outras não-problemáticas > cria nova
+ */
+async function findOrCreateXTab(browser, forceNew = false) {
+  const pages = await browser.pages()
+  console.log(`   ${pages.length} abas encontradas`)
+
+  if (!forceNew) {
+    // Prioridade 1: Aba em /home com botão de post
+    for (const p of pages) {
+      const url = p.url()
+      if ((url.includes('x.com/home') || url === 'https://x.com/') && !isProblematicUrl(url)) {
+        try {
+          const hasPostBtn = await Promise.race([
+            p.$('[data-testid="SideNav_NewTweet_Button"]'),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+          ])
+          if (hasPostBtn) {
+            console.log(`   ✅ Aba /home logada encontrada: ${url}`)
+            return { page: p, isNew: false }
+          }
+        } catch {
+          // Continua para próxima aba
+        }
+      }
+    }
+
+    // Prioridade 2: Qualquer aba do X não-problemática com botão de post
+    for (const p of pages) {
+      const url = p.url()
+      if ((url.includes('x.com') || url.includes('twitter.com')) && !isProblematicUrl(url)) {
+        try {
+          const hasPostBtn = await Promise.race([
+            p.$('[data-testid="SideNav_NewTweet_Button"]'),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+          ])
+          if (hasPostBtn) {
+            console.log(`   ✅ Aba logada encontrada: ${url}`)
+            return { page: p, isNew: false }
+          } else {
+            console.log(`   Aba ${url.substring(0, 50)}... - sem botao de post`)
+          }
+        } catch {
+          console.log(`   Aba ${url.substring(0, 50)}... - timeout ao verificar`)
+        }
+      }
+    }
+  }
+
+  // Prioridade 3: Criar nova aba limpa
+  console.log('   🆕 Criando nova aba limpa para /home...')
+  const newPage = await browser.newPage()
+  newPage.setDefaultTimeout(PAGE_TIMEOUT)
+  newPage.setDefaultNavigationTimeout(PAGE_TIMEOUT)
+
+  await newPage.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 30000 })
+  await new Promise(r => setTimeout(r, 5000))
+
+  // Verifica se redirecionou para login
+  const currentUrl = newPage.url()
+  if (currentUrl.includes('/login') || currentUrl.includes('/i/flow/login')) {
+    await newPage.close().catch(() => {})
+    throw new Error('Nao esta logado no X. Faca login no Chrome primeiro.')
+  }
+
+  // Verifica se tem botão de post
+  const hasPostBtn = await newPage.$('[data-testid="SideNav_NewTweet_Button"]')
+  if (!hasPostBtn) {
+    await newPage.close().catch(() => {})
+    throw new Error('Nao esta logado no X. Faca login no Chrome primeiro.')
+  }
+
+  console.log('   ✅ Nova aba criada e logada')
+  return { page: newPage, isNew: true }
+}
+
+/**
  * Digita texto como humano (com delays variaveis)
  */
 async function typeHuman(page, text) {
@@ -95,13 +211,16 @@ async function typeHuman(page, text) {
 }
 
 /**
- * Posta um tweet no X
+ * Posta um tweet no X (com retry e recuperação de erros)
  * @param {string} text - Texto do post
  * @param {boolean} keepBrowserOpen - Se true, nao desconecta do browser
+ * @param {boolean} forceNewTab - Se true, força criação de nova aba
  * @returns {Promise<{success: boolean, error?: string}>}
  */
-export async function postTweet(text, keepBrowserOpen = true) {
+export async function postTweet(text, keepBrowserOpen = true, forceNewTab = false) {
   let browser = null
+  let page = null
+  let isNewTab = false
 
   try {
     console.log('🔌 Conectando ao Chrome...')
@@ -110,57 +229,10 @@ export async function postTweet(text, keepBrowserOpen = true) {
     // Limpa abas em excesso
     await closeExcessTabs(browser)
 
-    // Pega todas as paginas abertas
-    const pages = await browser.pages()
-    console.log(`   ${pages.length} abas encontradas`)
-
-    // Procura uma aba do X que esteja LOGADA (tem botao de postar)
-    let page = null
-    for (const p of pages) {
-      const url = p.url()
-      if (url.includes('x.com') || url.includes('twitter.com')) {
-        // Verifica se esta logada (nao esta na pagina de login)
-        if (url.includes('/login') || url.includes('/i/flow/login')) {
-          console.log(`   Aba ${url} - pagina de login, pulando...`)
-          continue
-        }
-
-        // Verifica se tem o botao de postar (indica que esta logado)
-        const hasPostBtn = await p.$('[data-testid="SideNav_NewTweet_Button"]')
-        if (hasPostBtn) {
-          console.log(`   ✅ Aba logada encontrada: ${url}`)
-          page = p
-          break
-        } else {
-          console.log(`   Aba ${url} - sem botao de post, verificando proxima...`)
-        }
-      }
-    }
-
-    if (!page) {
-      // Nenhuma aba logada encontrada - tenta a primeira do X que nao seja login
-      page = pages.find(p => {
-        const url = p.url()
-        return (url.includes('x.com') || url.includes('twitter.com')) &&
-               !url.includes('/login') && !url.includes('/i/flow/login')
-      })
-
-      if (!page) {
-        // Nenhuma aba do X encontrada - abre uma nova
-        console.log('   ⚠️ Nenhuma aba do X encontrada, abrindo nova...')
-        page = await browser.newPage()
-        page.setDefaultTimeout(PAGE_TIMEOUT)
-        page.setDefaultNavigationTimeout(PAGE_TIMEOUT)
-        await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 30000 })
-        await new Promise(r => setTimeout(r, 5000))
-
-        // Verifica se redirecionou para login
-        const currentUrl = page.url()
-        if (currentUrl.includes('/login') || currentUrl.includes('/i/flow/login')) {
-          throw new Error('Nao esta logado no X. Faca login no Chrome primeiro.')
-        }
-      }
-    }
+    // Encontra ou cria aba do X
+    const tabResult = await findOrCreateXTab(browser, forceNewTab)
+    page = tabResult.page
+    isNewTab = tabResult.isNew
 
     console.log('📄 Usando aba:', page.url())
 
@@ -171,10 +243,17 @@ export async function postTweet(text, keepBrowserOpen = true) {
     // Traz a aba para frente
     await page.bringToFront()
 
-    // Navega para /home para garantir estado limpo (fecha modais abertos)
-    console.log('🔄 Navegando para /home...')
-    await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 30000 })
-    await new Promise(r => setTimeout(r, 3000))  // Espera carregar completamente
+    // SEMPRE navega para /home para garantir estado limpo
+    const currentUrl = page.url()
+    if (!currentUrl.includes('x.com/home') || isProblematicUrl(currentUrl)) {
+      console.log('🔄 Navegando para /home...')
+      await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 30000 })
+      await new Promise(r => setTimeout(r, 3000))
+    } else {
+      console.log('🔄 Recarregando /home...')
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 })
+      await new Promise(r => setTimeout(r, 2000))
+    }
 
     // Aguarda o botao de postar aparecer (indica que esta logado e carregou)
     console.log('⏳ Aguardando pagina carregar...')
@@ -406,29 +485,77 @@ export async function postTweet(text, keepBrowserOpen = true) {
   } catch (err) {
     console.error('❌ Erro ao postar:', err.message)
 
-    // Desconecta em caso de erro (mas nao fecha)
+    // Fecha aba nova em caso de erro (evita acumular abas)
+    if (isNewTab && page) {
+      try {
+        await page.close()
+      } catch {}
+    }
+
+    // Desconecta em caso de erro (mas nao fecha browser)
     if (browser) {
       browser.disconnect()
     }
 
-    return { success: false, error: err.message }
+    // Indica se erro é de contexto (precisa nova aba)
+    const needsNewTab = isContextError(err.message)
+
+    return { success: false, error: err.message, needsNewTab }
   }
 }
 
 /**
  * Posta multiplos tweets com delay entre eles
+ * Inclui retry com nova aba em caso de erro de contexto
  * @param {Array<{post: string, topic: string}>} posts
  * @param {function} onProgress - Callback (index, total, success)
  */
 export async function postMultipleTweets(posts, onProgress = null) {
   const results = []
+  let consecutiveFailures = 0
+  let forceNewTab = false
 
   for (let i = 0; i < posts.length; i++) {
     const post = posts[i]
+    let result = null
+    let attempts = 0
 
     console.log(`\n📤 Postando [${i + 1}/${posts.length}] ${post.topic}...`)
 
-    const result = await postTweet(post.post, true)
+    // Tenta postar com retry
+    while (attempts < MAX_POST_RETRIES && (!result || !result.success)) {
+      attempts++
+
+      if (attempts > 1) {
+        console.log(`   ⚠️ Tentativa ${attempts} falhou, aguardando 10s para retry...`)
+        await new Promise(r => setTimeout(r, 10000))
+      }
+
+      result = await postTweet(post.post, true, forceNewTab)
+
+      // Se erro de contexto, força nova aba no próximo retry
+      if (!result.success && result.needsNewTab) {
+        console.log('   🔄 Erro de contexto detectado, próxima tentativa usará nova aba')
+        forceNewTab = true
+      }
+    }
+
+    // Atualiza estado
+    if (result.success) {
+      console.log(`   ✅ Publicado!`)
+      consecutiveFailures = 0
+      forceNewTab = false  // Reset para próximo post
+    } else {
+      console.log(`   ❌ Erro: Falhou após todas tentativas`)
+      consecutiveFailures++
+
+      // Se 3 falhas consecutivas, força nova aba para próximos
+      if (consecutiveFailures >= 3) {
+        console.log('   ⚠️ 3 falhas consecutivas - forçando nova aba para próximos posts')
+        forceNewTab = true
+      }
+    }
+
     results.push({ ...result, index: i, topic: post.topic })
 
     if (onProgress) {
@@ -437,10 +564,14 @@ export async function postMultipleTweets(posts, onProgress = null) {
 
     // Delay entre posts (exceto no ultimo)
     if (i < posts.length - 1) {
-      console.log(`⏳ Aguardando ${DELAY_BETWEEN_POSTS_MS / 1000}s antes do proximo...`)
+      console.log(`   ⏳ Aguardando ${DELAY_BETWEEN_POSTS_MS / 1000}s...`)
       await new Promise(r => setTimeout(r, DELAY_BETWEEN_POSTS_MS))
     }
   }
+
+  // Resumo final
+  const successCount = results.filter(r => r.success).length
+  console.log(`\n✅ Finalizado: ${successCount}/${results.length} posts publicados`)
 
   return results
 }
