@@ -9,6 +9,8 @@
  */
 
 import 'dotenv/config'
+import fs from 'fs'
+import path from 'path'
 import { generatePost, generateBestThread } from '../src/claude-v2.js'
 import { curateContentV3, formatForPrompt, getFallbackContentV3 } from '../src/curate-v3.js'
 import { postTweet, postThread } from '../src/puppeteer-post.js'
@@ -36,6 +38,58 @@ const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: false })
 const chatId = process.env.TELEGRAM_CHAT_ID
 
 let cancelled = false
+
+// ==================== POST LOGGING ====================
+
+const POSTS_LOG_FILE = path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'data', 'posts-log.json')
+
+function loadPostsLog() {
+  try {
+    if (fs.existsSync(POSTS_LOG_FILE)) {
+      return JSON.parse(fs.readFileSync(POSTS_LOG_FILE, 'utf-8'))
+    }
+  } catch (err) {
+    console.log(`   Warning: Could not load posts log: ${err.message}`)
+  }
+  return { posts: [] }
+}
+
+function savePostsLog(log) {
+  try {
+    const dir = path.dirname(POSTS_LOG_FILE)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(POSTS_LOG_FILE, JSON.stringify(log, null, 2))
+  } catch (err) {
+    console.log(`   Warning: Could not save posts log: ${err.message}`)
+  }
+}
+
+function logPostedTweet(postData) {
+  const log = loadPostsLog()
+  log.posts.push({
+    id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    text: postData.post,
+    createdAt: new Date().toISOString(),
+    hook: postData.hook || 'unknown',
+    style: postData.style || 'unknown',
+    topic: postData.topic || 'unknown',
+    language: postData.language || 'unknown',
+    experiment: postData.experiment || null,
+    hour: new Date().getHours(),
+    metrics: { likes: 0, retweets: 0, replies: 0, impressions: 0, quotes: 0, bookmarks: 0 },
+    engagement: 0,
+    engagementRate: 0,
+    analyzedAt: null,
+    source: 'auto-post-v2'
+  })
+
+  // Keep only last 500 posts to avoid huge file
+  if (log.posts.length > 500) {
+    log.posts = log.posts.slice(-500)
+  }
+
+  savePostsLog(log)
+}
 
 // ==================== HELPERS ====================
 
@@ -159,7 +213,8 @@ async function main() {
           sentiment: data.sentiment,
           chars: postText.length,
           hook: metadata.hook,
-          style: metadata.style
+          style: metadata.style,
+          experiment: metadata.experiment || null
         })
       } catch (err) {
         console.log(`   ⚠️ Erro em ${topic} (${langLabel}): ${err.message}`)
@@ -329,10 +384,10 @@ async function main() {
   // ==================== 5. POST ====================
 
   console.log('\n5. Publicando conteúdo...')
-  await notify('🚀 Iniciando publicação...')
 
   let successCount = 0
   let threadSuccess = false
+  const errors = []
 
   // ========== 5.1 POST THREAD FIRST (higher engagement potential) ==========
 
@@ -342,7 +397,6 @@ async function main() {
     const imageIndicator = threadImage ? ' 🖼️' : ''
 
     console.log(`\n🧵 Postando THREAD${imageIndicator} (${thread.tweets.length} tweets sobre ${thread.topic})...`)
-    await notify(`🧵 Iniciando thread ${threadEmoji}${threadFlag}${imageIndicator}...`)
 
     try {
       // Pass image path for first tweet (optional)
@@ -358,14 +412,24 @@ async function main() {
         threadSuccess = true
         const imgStr = threadImage ? ' com imagem' : ''
         console.log(`   ✅ Thread publicada${imgStr}: ${threadResult.postedCount}/${thread.tweets.length} tweets`)
-        await notify(`✅ 🧵 Thread publicada${imgStr}: ${threadResult.postedCount}/${thread.tweets.length} tweets!`)
+        // Log each thread tweet
+        for (const tweet of thread.tweets) {
+          logPostedTweet({
+            post: tweet,
+            hook: thread._metadata?.framework || 'thread',
+            style: 'thread',
+            topic: thread.topic,
+            language: THREAD_LANGUAGE,
+            experiment: null
+          })
+        }
       } else {
         console.log(`   ❌ Thread falhou: ${threadResult.error}`)
-        await notify(`❌ 🧵 Thread falhou: ${threadResult.error}`)
+        errors.push(`🧵 Thread: ${threadResult.error}`)
       }
     } catch (err) {
       console.log(`   ❌ Erro na thread: ${err.message}`)
-      await notify(`❌ 🧵 Erro na thread: ${err.message}`)
+      errors.push(`🧵 Thread: ${err.message}`)
     }
 
     // Longer delay after thread
@@ -388,10 +452,10 @@ async function main() {
     if (result.success) {
       successCount++
       console.log(`   ✅ Publicado!`)
-      await notify(`✅ <b>[${i + 1}/${posts.length}]</b> ${emoji}${flag} ${topic.toUpperCase()} publicado!`)
+      logPostedTweet(posts[i])
     } else {
       console.log(`   ❌ Erro: ${result.error}`)
-      await notify(`❌ <b>[${i + 1}/${posts.length}]</b> ${emoji}${flag} ${topic.toUpperCase()} falhou`)
+      errors.push(`${emoji}${flag} ${topic.toUpperCase()}: ${result.error}`)
     }
 
     // Delay between posts
@@ -405,7 +469,13 @@ async function main() {
 
   const threadStr = thread ? (threadSuccess ? ' + 🧵 thread' : ' (thread falhou)') : ''
   console.log(`\n✅ Finalizado: ${successCount}/${posts.length} posts publicados${threadStr}`)
-  await notify(`✅ <b>${successCount}/${posts.length}</b> posts publicados${threadStr}!`)
+
+  // Single summary notification
+  let summaryMsg = `✅ <b>${successCount}/${posts.length}</b> posts publicados${threadStr}`
+  if (errors.length > 0) {
+    summaryMsg += `\n\n⚠️ <b>${errors.length} erro(s):</b>\n${errors.map(e => `• ${escapeHtml(e)}`).join('\n')}`
+  }
+  await notify(summaryMsg)
 
   process.exit(0)
 }
