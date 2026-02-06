@@ -310,6 +310,8 @@ node scripts/test-video-meme.js [topic]      # Specify topic
 Verificacao final exige 90% do texto. Se < 90%, retry via clipboard. Se ainda falha, erro (trigger retry do post inteiro).
 
 ## Historico de Commits (Recentes)
+- **2026-02-06 16:19** [`d8192c9`] Fix posting failures: robust Post button click + text verification (src/puppeteer-post.js,src/sources/x-viral-search.js)
+- **2026-02-06 14:09** [`666cc2b`] Add Media Posts system: Reddit memes + X quote tweets (.claude/CLAUDE.md,scripts/auto-post-v2.js,scripts/test-video-meme.js,src/claude-v2.js,src/media-downloader.js)
 - **2026-02-06 12:24** [`cfbe48e`] Update documentation with today's fixes (.claude/CLAUDE.md)
 - **2026-02-06** [`269ba13`] Stricter text verification: reject posts <90% + retry clipboard
 - **2026-02-06** [`a718ad2`] Fix text truncation undetected + false-positive post success
