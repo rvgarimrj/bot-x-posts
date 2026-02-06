@@ -35,7 +35,7 @@ let heartbeatCount = 0
 let lastHeartbeat = Date.now()
 
 function startHeartbeat() {
-  setInterval(() => {
+  setInterval(async () => {
     heartbeatCount++
     lastHeartbeat = Date.now()
 
@@ -50,9 +50,33 @@ function startHeartbeat() {
       const now = new Date().toLocaleString('pt-BR', { timeZone: TIMEZONE })
       console.log(`[HEARTBEAT] ${now} - alive (${heartbeatCount} beats)`)
     }
+
+    // Watchdog: check for missed crons every heartbeat
+    try {
+      await checkMissedCrons()
+    } catch (err) {
+      console.error('[WATCHDOG] Erro no checkMissedCrons:', err.message)
+    }
+
+    // Failsafe: force restart if uptime > 25h (in case 00:05 auto-restart also failed)
+    const uptimeMs = Date.now() - DAEMON_START_TIME
+    const uptimeHours = uptimeMs / (1000 * 60 * 60)
+    if (uptimeHours > 25) {
+      console.log(`[FAILSAFE] Uptime ${Math.round(uptimeHours)}h > 25h. Forcando restart...`)
+      try {
+        await sendNotification(
+          `[FAILSAFE] <b>Auto-Restart por Uptime</b>\n\n` +
+          `Uptime: ${Math.round(uptimeHours)}h\n` +
+          `Acao: Forcando process.exit(0)\n` +
+          `LaunchAgent vai reiniciar automaticamente.`
+        )
+      } catch {}
+      process.exit(0)
+    }
   }, HEARTBEAT_INTERVAL)
 
   console.log(`[HEARTBEAT] Anti-suspension heartbeat started (every ${HEARTBEAT_INTERVAL / 60000}min)`)
+  console.log(`[WATCHDOG] Watchdog ativo: verifica crons perdidos a cada heartbeat`)
 }
 
 // ==================== DEFAULT SCHEDULE ====================
@@ -68,6 +92,166 @@ const MIN_POSTS_FOR_DYNAMIC_SCHEDULE = 30
 // Store active cron jobs for potential reschedule
 let activeJobs = []
 let currentSchedule = []
+
+// ==================== WATCHDOG: ANTI-CRON-PERDIDO ====================
+
+const EXECUTIONS_FILE = path.join(process.cwd(), 'logs', '.cron-executions.json')
+const GRACE_WINDOW_MS = 30 * 60 * 1000 // 30 minutes
+const DAEMON_START_TIME = Date.now()
+
+// Track which hours the watchdog already auto-triggered today (prevent double-fire)
+const lastTriggeredByWatchdog = new Map()
+
+/**
+ * Get current hour in configured timezone
+ */
+function getCurrentHourInTimezone() {
+  const now = new Date()
+  const hourStr = now.toLocaleString('en-US', { timeZone: TIMEZONE, hour: 'numeric', hour12: false })
+  return parseInt(hourStr)
+}
+
+/**
+ * Get today's date string in configured timezone (YYYY-MM-DD)
+ */
+function getTodayInTimezone() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: TIMEZONE }) // en-CA = YYYY-MM-DD
+}
+
+/**
+ * Load execution records from disk
+ */
+function loadExecutions() {
+  try {
+    if (fs.existsSync(EXECUTIONS_FILE)) {
+      return JSON.parse(fs.readFileSync(EXECUTIONS_FILE, 'utf8'))
+    }
+  } catch (err) {
+    console.error('[WATCHDOG] Erro ao carregar executions:', err.message)
+  }
+  return {}
+}
+
+/**
+ * Save execution records to disk
+ */
+function saveExecutions(executions) {
+  try {
+    const logsDir = path.join(process.cwd(), 'logs')
+    if (!fs.existsSync(logsDir)) {
+      fs.mkdirSync(logsDir, { recursive: true })
+    }
+    fs.writeFileSync(EXECUTIONS_FILE, JSON.stringify(executions, null, 2))
+  } catch (err) {
+    console.error('[WATCHDOG] Erro ao salvar executions:', err.message)
+  }
+}
+
+/**
+ * Record that a cron job executed for a given hour
+ */
+function recordExecution(hour) {
+  const today = getTodayInTimezone()
+  const executions = loadExecutions()
+
+  if (!executions[today]) {
+    executions[today] = {}
+  }
+  executions[today][String(hour)] = {
+    timestamp: Date.now(),
+    time: new Date().toLocaleString('pt-BR', { timeZone: TIMEZONE })
+  }
+
+  // Clean up old entries (keep only last 7 days)
+  const keys = Object.keys(executions).sort()
+  while (keys.length > 7) {
+    delete executions[keys.shift()]
+  }
+
+  saveExecutions(executions)
+  console.log(`[WATCHDOG] Execucao registrada: ${hour} (${today})`)
+}
+
+/**
+ * Check for missed cron triggers and auto-fire if within grace window
+ */
+async function checkMissedCrons() {
+  const today = getTodayInTimezone()
+  const currentHour = getCurrentHourInTimezone()
+  const now = Date.now()
+  const executions = loadExecutions()
+  const todayExecs = executions[today] || {}
+
+  // Get the scheduled hours that should have fired by now
+  const scheduledHours = currentSchedule.map(s => s.hour)
+
+  for (const scheduledHour of scheduledHours) {
+    // Only check hours that should have already fired
+    if (currentHour <= scheduledHour) continue
+
+    const hourKey = String(scheduledHour)
+
+    // Already executed today? Skip
+    if (todayExecs[hourKey]) continue
+
+    // Already triggered by watchdog today? Skip
+    const watchdogKey = `${today}-${hourKey}`
+    if (lastTriggeredByWatchdog.has(watchdogKey)) continue
+
+    // Calculate how long ago the scheduled time was
+    const scheduledTime = new Date()
+    scheduledTime.setHours(scheduledHour, 0, 0, 0)
+    // Adjust for timezone: get the actual scheduled timestamp
+    const tzNow = new Date(new Date().toLocaleString('en-US', { timeZone: TIMEZONE }))
+    const msSinceScheduled = tzNow - new Date(tzNow.toDateString() + ` ${scheduledHour}:00:00`)
+
+    if (msSinceScheduled > 0 && msSinceScheduled <= GRACE_WINDOW_MS) {
+      // Within grace window - AUTO-TRIGGER
+      console.log(`\n[WATCHDOG] CRON PERDIDO DETECTADO: ${scheduledHour}h (${Math.round(msSinceScheduled / 60000)}min atras)`)
+      console.log(`[WATCHDOG] Auto-triggering ${scheduledHour}h...`)
+
+      lastTriggeredByWatchdog.set(watchdogKey, now)
+
+      try {
+        await sendNotification(
+          `[WATCHDOG] <b>Cron Perdido - Auto-Trigger</b>\n\n` +
+          `Horario: ${scheduledHour}h\n` +
+          `Atraso: ${Math.round(msSinceScheduled / 60000)}min\n` +
+          `Acao: Auto-trigger executado\n\n` +
+          `<i>O watchdog detectou que o cron das ${scheduledHour}h nao disparou e acionou automaticamente.</i>`
+        )
+      } catch (err) {
+        console.error('[WATCHDOG] Erro ao notificar:', err.message)
+      }
+
+      recordExecution(scheduledHour)
+      runBot()
+    } else if (msSinceScheduled > GRACE_WINDOW_MS) {
+      // Outside grace window - just alert (too late to recover)
+      lastTriggeredByWatchdog.set(watchdogKey, now) // Don't alert again
+
+      console.log(`[WATCHDOG] CRON PERDIDO (fora do grace window): ${scheduledHour}h (${Math.round(msSinceScheduled / 60000)}min atras)`)
+
+      try {
+        await sendNotification(
+          `[WATCHDOG] <b>Cron Perdido - Alerta</b>\n\n` +
+          `Horario: ${scheduledHour}h\n` +
+          `Atraso: ${Math.round(msSinceScheduled / 60000)}min\n` +
+          `Acao: Nenhuma (fora do grace window de 30min)\n\n` +
+          `<i>Considere reiniciar o daemon se isso se repetir.</i>`
+        )
+      } catch (err) {
+        console.error('[WATCHDOG] Erro ao notificar:', err.message)
+      }
+    }
+  }
+
+  // Also check health and learning crons
+  if (currentHour > 0 && !todayExecs['health']) {
+    // Health check at 00:01 should have run if currentHour > 0
+    // Just informational, no auto-trigger for health
+  }
+}
 
 // ==================== SINGLETON CHECK ====================
 
@@ -339,6 +523,8 @@ console.log(`[POSTS] Total: ${currentSchedule.length * TOPICS.length * LANGUAGES
 console.log(`[REPLY] Reply monitor: DESATIVADO`)
 console.log(`[HEALTH] Health check: 00:01`)
 console.log(`[LEARNING] Daily learning cycle: 23:59`)
+console.log(`[WATCHDOG] Anti-cron-perdido: ativo (grace window: ${GRACE_WINDOW_MS / 60000}min)`)
+console.log(`[RESTART] Auto-restart diario: 00:05`)
 console.log(`[START] Iniciado em: ${new Date().toLocaleString('pt-BR', { timeZone: TIMEZONE })}`)
 console.log('='.repeat(60))
 
@@ -475,6 +661,7 @@ function checkScheduleUpdate() {
 currentSchedule.forEach(({ hour, cron: cronExpr, desc }) => {
   const job = cron.schedule(cronExpr, () => {
     console.log(`\n[CRON] Cron disparado: ${hour}h`)
+    recordExecution(hour)
     runBot()
   }, {
     timezone: TIMEZONE
@@ -487,6 +674,7 @@ currentSchedule.forEach(({ hour, cron: cronExpr, desc }) => {
 // Schedule health check at 00:01
 cron.schedule(HEALTH_CHECK.cron, () => {
   console.log(`\n[CRON] Cron disparado: Health Check`)
+  recordExecution('health')
   runHealthCheck()
 }, {
   timezone: TIMEZONE
@@ -497,12 +685,36 @@ console.log(`   [OK] Agendado: ${HEALTH_CHECK.desc}`)
 // Schedule daily learning at 23:59
 cron.schedule(DAILY_LEARNING.cron, () => {
   console.log(`\n[CRON] Cron disparado: Daily Learning`)
+  recordExecution('learning')
   runDailyLearning()
 }, {
   timezone: TIMEZONE
 })
 
 console.log(`   [OK] Agendado: ${DAILY_LEARNING.desc}`)
+
+// Auto-restart at 00:05 (after learning at 23:59)
+// LaunchAgent KeepAlive: true will restart the daemon automatically
+cron.schedule('5 0 * * *', async () => {
+  const uptimeMs = Date.now() - DAEMON_START_TIME
+  const uptimeHours = Math.round(uptimeMs / (1000 * 60 * 60))
+  console.log(`\n[AUTO-RESTART] Restart diario programado (uptime: ${uptimeHours}h)`)
+  recordExecution('restart')
+  try {
+    await sendNotification(
+      `[AUTO-RESTART] <b>Restart Diario</b>\n\n` +
+      `Uptime: ${uptimeHours}h\n` +
+      `Acao: process.exit(0)\n` +
+      `LaunchAgent vai reiniciar automaticamente.`
+    )
+  } catch {}
+  // Small delay to ensure notification is sent
+  setTimeout(() => process.exit(0), 3000)
+}, {
+  timezone: TIMEZONE
+})
+
+console.log(`   [OK] Agendado: 00:05 Auto-Restart (previne timer drift)`)
 
 // Reply monitoring DISABLED - focusing on posts + analytics
 // cron.schedule(REPLY_MONITOR.cron, () => {
@@ -588,6 +800,8 @@ sendNotification(
   `[POSTS] ${currentSchedule.length * TOPICS.length * LANGUAGES.length} posts/dia\n` +
   `[HEALTH] Health check: 00:01\n` +
   `[LEARNING] Self-learning at 23:59\n` +
+  `[WATCHDOG] Anti-cron-perdido: ativo\n` +
+  `[RESTART] Auto-restart: 00:05\n` +
   `[TIMEZONE] Timezone: ${TIMEZONE}`
 )
   .then(() => console.log('[TELEGRAM] Notificacao de inicio enviada'))
