@@ -354,42 +354,36 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
     await page.keyboard.press('Backspace')
     await new Promise(r => setTimeout(r, 500))
 
-    // ========== INSERÇÃO VIA CLIPBOARD (mais confiável) ==========
-    // Clipboard é a forma mais confiável de inserir texto longo no X
+    // ========== INSERÇÃO VIA execCommand (mais confiável) ==========
+    // execCommand('insertText') funciona sem user gesture, ao contrário de navigator.clipboard
 
-    // Delay antes de "colar" (1-2s) - simula preparar texto
+    // Delay antes de inserir (1-2s) - simula preparar texto
     console.log('   Preparando texto...')
     await new Promise(r => setTimeout(r, Math.random() * 1000 + 1000))
 
-    // Insere via clipboard (mais confiável para textos longos)
     console.log('   Digitando texto (humanizado)...')
 
-    // Copia texto para clipboard e cola
-    await page.evaluate(async (textToInsert) => {
-      await navigator.clipboard.writeText(textToInsert)
+    // MÉTODO 1: execCommand insertText (funciona com emojis, sem user gesture)
+    await page.evaluate((textToInsert) => {
+      const activeEl = document.activeElement
+      if (activeEl && activeEl.isContentEditable) {
+        document.execCommand('insertText', false, textToInsert)
+      }
     }, text)
 
-    await new Promise(r => setTimeout(r, 300))
-
-    // Cola (Cmd+V no Mac)
-    await page.keyboard.down('Meta')
-    await page.keyboard.press('v')
-    await page.keyboard.up('Meta')
-
-    // Delay depois de colar (1-2s) - espera UI processar
+    // Delay depois de inserir (1-2s) - espera UI processar
     await new Promise(r => setTimeout(r, Math.random() * 1000 + 1000))
 
-    // Verifica se o texto foi inserido corretamente
-    const insertedText = await page.evaluate(() => {
+    // Verifica com seletor específico (activeEl.textContent pode incluir texto de outros elementos)
+    let insertedText = await page.evaluate(() => {
       const el = document.querySelector('[data-testid="tweetTextarea_0"]')
       return el ? el.textContent : ''
     })
 
-    console.log(`   Texto inserido: ${insertedText.length}/${text.length} chars`)
-
-    if (insertedText.length < text.length * 0.5) {
-      // Fallback: tenta via keyboard.type (lento mas confiável)
-      console.log('   ⚠️ Clipboard falhou, tentando digitacao...')
+    if (insertedText.length < text.length * 0.8) {
+      // MÉTODO 2: Clipboard via textarea oculto (não requer user gesture)
+      console.log(`   Texto inserido: ${insertedText.length}/${text.length} chars`)
+      console.log('   ⚠️ execCommand incompleto, tentando clipboard via textarea...')
 
       // Limpa o que foi inserido
       await page.keyboard.down('Meta')
@@ -398,7 +392,59 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
       await page.keyboard.press('Backspace')
       await new Promise(r => setTimeout(r, 500))
 
-      // Digita caractere por caractere (mais lento, mas funciona)
+      // Usa textarea oculto para copiar (funciona sem user gesture)
+      const clipboardWorked = await page.evaluate((textToInsert) => {
+        try {
+          const temp = document.createElement('textarea')
+          temp.value = textToInsert
+          temp.style.position = 'fixed'
+          temp.style.left = '-9999px'
+          temp.style.top = '-9999px'
+          temp.style.opacity = '0'
+          document.body.appendChild(temp)
+          temp.select()
+          temp.setSelectionRange(0, textToInsert.length)
+          const success = document.execCommand('copy')
+          document.body.removeChild(temp)
+          return success
+        } catch {
+          return false
+        }
+      }, text)
+
+      if (clipboardWorked) {
+        // Clica no campo para garantir foco
+        await textbox.click()
+        await new Promise(r => setTimeout(r, 200))
+        // Cola (Cmd+V no Mac)
+        await page.keyboard.down('Meta')
+        await page.keyboard.press('v')
+        await page.keyboard.up('Meta')
+        await new Promise(r => setTimeout(r, 1000))
+      }
+
+      // Verifica resultado
+      insertedText = await page.evaluate(() => {
+        const el = document.querySelector('[data-testid="tweetTextarea_0"]')
+        return el ? el.textContent : ''
+      })
+
+      console.log(`   Texto inserido: ${insertedText.length}/${text.length} chars`)
+    }
+
+    if (insertedText.length < text.length * 0.8) {
+      // MÉTODO 3: keyboard.type (lento mas sempre funciona)
+      console.log(`   Texto inserido: ${insertedText.length}/${text.length} chars`)
+      console.log('   ⚠️ Clipboard também falhou, usando digitação manual...')
+
+      // Limpa
+      await page.keyboard.down('Meta')
+      await page.keyboard.press('a')
+      await page.keyboard.up('Meta')
+      await page.keyboard.press('Backspace')
+      await new Promise(r => setTimeout(r, 500))
+
+      // Digita caractere por caractere
       await typeHuman(page, text)
     }
 
@@ -412,9 +458,14 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
       return el ? el.textContent : ''
     })
 
+    if (finalText.length < text.length * 0.5) {
+      console.log(`   ❌ Texto final muito curto (${finalText.length}/${text.length} chars)`)
+      console.log(`   Conteúdo: "${finalText.slice(0, 100)}..."`)
+      throw new Error(`Texto truncado: ${finalText.length}/${text.length} chars inseridos`)
+    }
+
     if (finalText.length < text.length * 0.8) {
       console.log(`   ⚠️ AVISO: Texto final (${finalText.length} chars) menor que esperado (${text.length} chars)`)
-      console.log(`   Primeiros 100 chars: "${finalText.slice(0, 100)}..."`)
     }
 
     console.log('   ✅ Texto inserido')
@@ -470,7 +521,10 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
     if (modalClosed) {
       console.log('   ✅ Modal fechou - post enviado!')
     } else {
-      console.log('   ⚠️ Modal ainda aberta - verificar manualmente')
+      // Tenta fechar via Escape e reportar falha
+      await page.keyboard.press('Escape')
+      await new Promise(r => setTimeout(r, 1000))
+      throw new Error('Modal nao fechou apos clicar Postar - post pode nao ter sido enviado')
     }
 
     console.log('✅ Post publicado!')
