@@ -475,8 +475,14 @@ IMPORTANTE: Este experimento tem PRIORIDADE sobre as guidelines de tamanho norma
     ? `- MAXIMUM ${charLimit} chars (experiment constraint)`
     : `- ${charLimit} chars`
 
+  // Current date context to prevent outdated year references
+  const now = new Date()
+  const currentDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  const currentYear = now.getFullYear()
+
   const userPrompt = language === 'en'
-    ? `TOPIC: ${topic}
+    ? `TODAY'S DATE: ${currentDate} (year ${currentYear})
+TOPIC: ${topic}
 
 DATA:
 ${newsContext}
@@ -496,11 +502,13 @@ CRITICAL:
 - Sound like texting a friend, not writing an essay
 - ONE point only
 - NEVER use banned words
-- 0-2 hashtags
+- 0-2 hashtags (each separated by space, NO duplicates)
+- We are in ${currentYear}. NEVER reference past years (2024, 2025) unless the data explicitly mentions them as historical context
 ${charInstruction}
 
 Just the post text.`
-    : `TOPICO: ${topic}
+    : `DATA DE HOJE: ${currentDate} (ano ${currentYear})
+TOPICO: ${topic}
 
 DADOS:
 ${newsContext}
@@ -520,7 +528,8 @@ CRITICO:
 - Som de mensagem pra amigo, nao redacao
 - UM ponto so
 - NUNCA use palavras proibidas
-- 0-2 hashtags
+- 0-2 hashtags (separadas por espaco, SEM duplicatas)
+- Estamos em ${currentYear}. NUNCA referencie anos passados (2024, 2025) a menos que os dados mencionem explicitamente como contexto historico
 ${charInstruction}
 
 So o texto do post.`
@@ -769,8 +778,14 @@ export async function generateThread(topic, newsContext, language = 'pt-BR', twe
 
   console.log(`      [thread framework: ${selectedFramework.name}]`)
 
+  // Current date context for threads
+  const now = new Date()
+  const currentDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  const currentYear = now.getFullYear()
+
   const userPrompt = language === 'en'
-    ? `TOPIC: ${topic}
+    ? `TODAY'S DATE: ${currentDate} (year ${currentYear})
+TOPIC: ${topic}
 
 DATA:
 ${newsContext}
@@ -787,7 +802,8 @@ CRITICAL:
 - Each tweet MAX 250 chars
 - Make it a STORY, not just facts
 - Sound human, not AI
-- Last tweet: hashtags + CTA
+- Last tweet: hashtags + CTA (each hashtag separated by space, NO duplicates)
+- We are in ${currentYear}. NEVER reference past years (2024, 2025) unless the data explicitly mentions them as historical context
 
 Output format (one tweet per line, separated by ---):
 1/ First tweet here 🧵
@@ -803,7 +819,8 @@ Output format (one tweet per line, separated by ---):
 ---
 
 etc.`
-    : `TÓPICO: ${topic}
+    : `DATA DE HOJE: ${currentDate} (ano ${currentYear})
+TÓPICO: ${topic}
 
 DADOS:
 ${newsContext}
@@ -820,7 +837,8 @@ CRÍTICO:
 - Cada tweet MAX 250 chars
 - Faça ser uma HISTÓRIA, não só fatos
 - Som humano, não IA
-- Último tweet: hashtags + CTA
+- Último tweet: hashtags + CTA (cada hashtag separada por espaco, SEM duplicatas)
+- Estamos em ${currentYear}. NUNCA referencie anos passados (2024, 2025) a menos que os dados mencionem explicitamente como contexto historico
 
 Formato de saída (um tweet por linha, separados por ---):
 1/ Primeiro tweet aqui 🧵

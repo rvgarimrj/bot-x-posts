@@ -12,78 +12,33 @@
 
 Bot automatizado para postar no X (Twitter) via Puppeteer conectado ao Chrome em modo debug. Gera posts bilingues (EN + PT-BR) sobre crypto, investing, AI e vibeCoding usando curadoria multi-fonte + Claude.
 
-## Arquitetura V2 (Multi-Source Bilingual + Reply Monitor)
+## Arquitetura V2
 
-```
-Cron (8h,10h,12h,14h,16h,18h,20h,22h,23h - Daily)
-    │
-    ▼
-┌─────────────────────────────────────────────────┐
-│              CURATE-V3 (Orquestrador)           │
-│                                                 │
-│  Para cada topico, busca em paralelo:          │
-│  ┌─────────┐ ┌─────────┐ ┌─────────┐           │
-│  │ Fonte 1 │ │ Fonte 2 │ │ Fonte 3 │           │
-│  └────┬────┘ └────┬────┘ └────┬────┘           │
-│       └───────────┼───────────┘                 │
-│                   ▼                             │
-│            Cache Manager                        │
-│       (fresh 30min, stale 4h)                  │
-└─────────────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────────────┐
-│           CLAUDE-V2 (Analise + Geracao)         │
-│                                                 │
-│  • Analisa sentiment/narrativa                  │
-│  • Gera 2 posts por topico (EN + PT-BR)        │
-│  • System prompts diferentes por idioma        │
-│  • 8 estilos x 8 hooks = 64 combinacoes        │
-└─────────────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────────────┐
-│            TELEGRAM PREVIEW (2 min)             │
-│         8 posts com botao de cancelar          │
-└─────────────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────────────┐
-│         PUPPETEER POST (60s entre posts)        │
-│      Digitacao humanizada, Chrome debug        │
-└─────────────────────────────────────────────────┘
-```
+Cron (8h-23h) -> Curate-V3 (multi-fonte paralelo, cache 30min/4h) -> Claude-V2 (analise + geracao bilingue, 8 styles x 8 hooks) -> Telegram Preview (2min) -> Puppeteer Post (60s entre posts, digitacao humanizada)
 
 ## Horarios e Topicos (TODOS OS DIAS)
 
 | Horario | Posts | Thread | Topicos | Idiomas |
 |---------|-------|--------|---------|---------|
 | 8h | 8 | - | crypto, investing, ai, vibeCoding | EN + PT-BR |
-| 10h | 8 | 🧵🖼️ | crypto, investing, ai, vibeCoding | EN + PT-BR |
+| 10h | 8 | thread+img | crypto, investing, ai, vibeCoding | EN + PT-BR |
 | 12h | 8 | - | crypto, investing, ai, vibeCoding | EN + PT-BR |
 | 14h | 8 | - | crypto, investing, ai, vibeCoding | EN + PT-BR |
 | 16h | 8 | - | crypto, investing, ai, vibeCoding | EN + PT-BR |
-| 18h | 8 | 🧵🖼️ | crypto, investing, ai, vibeCoding | EN + PT-BR |
+| 18h | 8 | thread+img | crypto, investing, ai, vibeCoding | EN + PT-BR |
 | 20h | 8 | - | crypto, investing, ai, vibeCoding | EN + PT-BR |
 | 22h | 8 | - | crypto, investing, ai, vibeCoding | EN + PT-BR |
 | 23h | 8 | - | crypto, investing, ai, vibeCoding | EN + PT-BR |
 
-**Total:** 72 posts + 2 threads com imagem/dia = 82 tweets/dia
+**Total:** 72 posts + 2 threads com imagem/dia = 82 tweets/dia. Threads as 10h/18h em EN com imagem Gemini.
 
-**Threads:** Às 10h e 18h (horários de pico global e BR), em inglês, com imagem gerada por IA no primeiro tweet.
+**Ciclos extras:** 00:01 Health Check | 23:59 Daily Learning
 
-### Ciclos Automaticos Adicionais
-
-| Horario | Funcao |
-|---------|--------|
-| 00:01 | Health Check |
-| 23:59 | Daily Learning - analise + ajuste de pesos + relatorio |
-
-> **Nota:** Reply Monitor está DESATIVADO. Foco atual: posts + analytics + metas.
+> **Nota:** Reply Monitor DESATIVADO. Foco: posts + analytics + metas.
 
 ## Arquivos Principais
 
-### V2 (Novo - Multi-Source Bilingual + Threads + Images)
+### V2
 | Arquivo | Funcao |
 |---------|--------|
 | `scripts/cron-daemon-v2.js` | Daemon V2: 9 horarios + heartbeat anti-suspensao |
@@ -92,9 +47,9 @@ Cron (8h,10h,12h,14h,16h,18h,20h,22h,23h - Daily)
 | `scripts/daily-learning.js` | Ciclo de aprendizado diario (23:59) |
 | `src/curate-v3.js` | Curadoria multi-fonte com fallback chains |
 | `src/claude-v2.js` | Geracao bilingue + Threads + Hook Frameworks |
-| `src/image-generator.js` | Gera imagens via Gemini API (Nano Banana) |
+| `src/image-generator.js` | Gera imagens via Gemini API |
 | `src/puppeteer-post.js` | Posta tweets/threads com imagens via Chrome |
-| `src/reply-monitor.js` | Monitora e responde comentarios com Claude |
+| `src/reply-monitor.js` | Monitora e responde comentarios (DESATIVADO) |
 | `src/learning-engine.js` | Analisa performance, ajusta pesos |
 | `src/analytics-monitor.js` | Coleta metricas do X Analytics |
 | `src/engagement-analyzer.js` | Analisa melhores horarios por regiao |
@@ -115,51 +70,24 @@ Cron (8h,10h,12h,14h,16h,18h,20h,22h,23h - Daily)
 | `src/telegram-v2.js` | Notificacoes Telegram |
 | `src/telegram-report.js` | Formatadores de relatorios Telegram |
 
-### Arquivos de Dados
+### Dados
 | Arquivo | Funcao |
 |---------|--------|
 | `data/learnings.json` | Pesos e scores do learning engine |
-| `data/replies-log.json` | Log de todas as respostas enviadas |
-| `data/replied-ids.json` | IDs de comentarios ja respondidos |
 | `data/GOALS.md` | Metas de monetizacao (5M impressoes, 500 premium, 2000 verified) |
+| `data/engagement-hours.json` | Pesos por horario baseado em engagement |
 | `logs/daily-reports/` | Relatorios diarios em JSON |
 
-## Fontes de Dados por Topico (V2)
+## Fontes de Dados por Topico
 
-### CRYPTO
-| Prioridade | Fonte | Rate Limit | Dados |
-|------------|-------|------------|-------|
-| Primary | CoinGecko | 30/min | BTC/ETH precos, Fear&Greed, trending |
-| Primary | Reddit r/cryptocurrency | 60/min | Hot posts, sentiment |
-| Fallback | RSS (CoinTelegraph, CryptoNews) | Ilimitado | Noticias |
-
-### INVESTING
-| Prioridade | Fonte | Rate Limit | Dados |
-|------------|-------|------------|-------|
-| Primary | Finnhub | 60/min | Noticias, earnings |
-| Primary | Reddit r/stocks, r/wallstreetbets | 60/min | Hot posts, tickers |
-| Fallback | RSS (MarketWatch) | Ilimitado | Noticias |
-
-### AI
-| Prioridade | Fonte | Rate Limit | Dados |
-|------------|-------|------------|-------|
-| Primary | HuggingFace Hub | Ilimitado | Modelos trending |
-| Primary | Reddit r/MachineLearning, r/ChatGPT | 60/min | Discussoes |
-| Secondary | arXiv API | 3/sec | Papers recentes |
-| Fallback | RSS (TechCrunch AI) | Ilimitado | Noticias |
-
-### VIBECODING
-| Prioridade | Fonte | Rate Limit | Dados |
-|------------|-------|------------|-------|
-| Primary | HackerNews | Ilimitado | Top stories |
-| Primary | GitHub API | 60/hora | Repos trending |
-| Secondary | Reddit r/Cursor, r/LocalLLaMA | 60/min | Discussoes |
-| Fallback | RSS (Dev.to) | Ilimitado | Artigos |
+- **CRYPTO:** CoinGecko (primary), Reddit r/cryptocurrency (primary), RSS CoinTelegraph/CryptoNews (fallback)
+- **INVESTING:** Finnhub (primary), Reddit r/stocks r/wallstreetbets (primary), RSS MarketWatch (fallback)
+- **AI:** HuggingFace Hub (primary), Reddit r/MachineLearning r/ChatGPT (primary), arXiv (secondary), RSS TechCrunch (fallback)
+- **VIBECODING:** HackerNews (primary), GitHub API (primary), Reddit r/Cursor r/LocalLLaMA (secondary), RSS Dev.to (fallback)
 
 ## Configuracoes Criticas
 
 ### Chrome Debug Mode
-Chrome DEVE rodar com:
 ```bash
 /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
   --remote-debugging-port=9222 \
@@ -169,914 +97,190 @@ Chrome DEVE rodar com:
 ```
 
 ### LaunchAgent (Daemon)
-Arquivo: `~/Library/LaunchAgents/com.botxposts.daemon.plist`
-- Chama `/usr/local/bin/node scripts/cron-daemon.js` diretamente
+- Arquivo: `~/Library/LaunchAgents/com.botxposts.daemon.plist`
+- Node: `/usr/local/bin/node` (SEMPRE caminho absoluto via launchd)
 - WorkingDirectory: `/Users/user/AppsCalude/Bot-X-Posts`
-- KeepAlive com SuccessfulExit: false (reinicia apenas em crash)
-- ThrottleInterval: 30 segundos
-
-### Caminhos Absolutos
-**IMPORTANTE:** Quando spawn processos via launchd, SEMPRE usar caminho absoluto:
-- Node: `/usr/local/bin/node` (NAO apenas `node`)
+- KeepAlive, ProcessType: Interactive, ThrottleInterval: 30s
 
 ### Anti-Timeout (Mac Sleep)
-- App Nap desativado para Chrome: `defaults write com.google.Chrome NSAppSleepDisabled -bool YES`
-- ProcessType: Interactive no plist
-- Timeouts configurados: 60s page, 120s protocol
+- App Nap desativado: `defaults write com.google.Chrome NSAppSleepDisabled -bool YES`
+- caffeinate -i via daemon-wrapper.sh
+- Heartbeat interno a cada 5min
+- Timeouts: 60s page, 120s protocol
 
 ## Curadoria v2
 
-### Fontes de Dados
-- **CoinGecko:** Preco BTC/ETH, Fear & Greed Index, trending coins
-- **Twitter API:** Busca trending com extracao de autores, hashtags e mentions
-- **Hacker News:** Top stories para vibeCoding
-- **Claude:** Analise de sentimento, narrativas e angulos sugeridos
+### Dados Extraidos do X
+`topTweets` (velocidade viral), `trendingHashtags`, `topAuthors` (@user + followers), `topMentions`, `influencers` (pre-definidos por nicho)
 
-### Dados Extraidos do X (TODOS os topicos)
-
-Para **crypto**, **investing** e **vibeCoding**, o sistema extrai:
-
-| Dado | Descricao | Uso |
-|------|-----------|-----|
-| `topTweets` | Tweets ordenados por velocidade viral | Contexto para Claude |
-| `trendingHashtags` | Hashtags mais usadas nos tweets | Incluir no post |
-| `topAuthors` | @usuarios + followers dos tweets virais | Referenciar no post |
-| `topMentions` | @contas mais mencionadas | Referenciar no post |
-| `influencers` | Lista pre-definida por nicho | Sugestao de mencao |
-
-### Queries de Busca por Topico
-
+### Queries de Busca
 ```javascript
 crypto: 'Bitcoin OR #BTC OR #crypto -filter:retweets'
 investing: 'stocks OR #SP500 OR $NVDA OR $TSLA -filter:retweets'
 vibeCoding: 'Claude Code OR Cursor AI OR "vibe coding" OR "AI coding" -filter:retweets'
 ```
 
-### Influencers Pre-definidos
-
-```javascript
-crypto: ['@sabortoothpete', '@CryptoCapo_', '@WClementeIII', '@documentingbtc', '@BitcoinMagazine']
-investing: ['@jimcramer', '@StockMKTNewz', '@unusual_whales', '@DeItaone', '@zaborowski']
-vibeCoding: ['@kaborowski', '@alexalbert__', '@cursor_ai', '@AnthropicAI', '@OpenAI']
-```
-
-### Prompt para Geracao de Posts
-
-O `formatForPrompt()` envia para Claude:
-```
-DADOS EM TEMPO REAL:
-- BTC: $83000 (-0.5%)
-- Fear & Greed: 20 (Extreme Fear)
-
-SENTIMENTO DO X: mixed (score: -15)
-NARRATIVA DOMINANTE: Bitcoin consolidando enquanto mercado em medo
-
-HASHTAGS EM ALTA: #Bitcoin #crypto #BTC
-CONTAS ATIVAS: @StckStratgy (8247), @cryptogallant (1750)
-MAIS MENCIONADOS: @Bitcoin, @elenakvcs
-INFLUENCERS DO NICHO: @CryptoCapo_, @BitcoinMagazine
-
-TWEETS VIRAIS NO MOMENTO:
-1. [45.2/h por @usuario] "texto do tweet..."
-
-INSTRUÇÕES EXTRAS:
-- Use 1-2 hashtags relevantes do trending
-- Se fizer sentido, mencione ou referencie uma conta ativa
-- Mantenha o tom autêntico e não pareça bot
-```
-
 ### Rate Limits e Cache
+Cache fresco 60min, stale 4h fallback. Delay 5s entre buscas. Deteccao rate limit automatica (para 15min).
 
-| Config | Valor | Motivo |
-|--------|-------|--------|
-| Cache fresco | 60 min | Evita requests repetidos |
-| Cache stale | 4 horas | Fallback quando rate limited |
-| Delay entre buscas | 5 segundos | Evita rate limit |
-| Queries por topico | 1 (com OR) | Menos requests |
-| Deteccao rate limit | Automatica | Para de tentar por 15min |
-
-### IMPORTANTE: O que os Cron Jobs DEVEM fazer
-
-1. **Curadoria v2** busca dados frescos + trending do X
-2. **Extrair** hashtags, autores e mentions dos tweets virais
-3. **Passar** esses dados para o Claude via `formatForPrompt()`
-4. **Claude gera** posts usando hashtags trending e referencias a contas
-5. **Posts incluem** 1-2 hashtags relevantes e podem mencionar contas ativas
+### Cron Jobs DEVEM:
+1. Curadoria busca dados frescos + trending do X
+2. Extrair hashtags, autores e mentions dos tweets virais
+3. Passar dados para Claude via `formatForPrompt()`
+4. Claude gera posts com 1-2 hashtags trending + referencias a contas
 
 ## Comandos Uteis
 
 ```bash
-# ===== V2 (Recomendado) =====
-
-# Iniciar daemon V2
+# V2 - Daemon
 npm run start:v2
+# Interativo: run(r) learn(l) reply(rp) health(h) schedule(sc) status(s) help(?)
 
-# Comandos interativos do daemon (digitar no terminal):
-#   run (r)      - Executa ciclo de postagem
-#   learn (l)    - Executa ciclo de aprendizado
-#   reply (rp)   - Verifica e responde comentarios
-#   health (h)   - Executa health check
-#   schedule (sc) - Mostra horarios dinamicos
-#   status (s)   - Mostra status e estatisticas
-#   help (?)     - Menu de ajuda
+# Testar sources
+node scripts/test-source.js coingecko|reddit|finnhub|hackernews|github|huggingface
 
-# Testar reply monitor
-node src/reply-monitor.js              # Executa ciclo real
-node src/reply-monitor.js --dry-run    # Simula sem postar
+# Testar curadoria/geracao
+node scripts/test-curate-v3.js [crypto]
+node scripts/test-generate-v2.js [crypto en]
 
-# Testar uma source individual
-node scripts/test-source.js coingecko
-node scripts/test-source.js reddit investing
-node scripts/test-source.js finnhub
-node scripts/test-source.js hackernews
-node scripts/test-source.js github
-node scripts/test-source.js huggingface
-
-# Testar curadoria V3
-node scripts/test-curate-v3.js              # Todos os topicos
-node scripts/test-curate-v3.js crypto       # Topico especifico
-
-# Testar geracao bilingue
-node scripts/test-generate-v2.js            # Todos
-node scripts/test-generate-v2.js crypto en  # Especifico
-
-# Rodar ciclo completo (dry-run)
+# Ciclo completo / learning
 node scripts/auto-post-v2.js
-
-# Rodar learning manualmente
 node scripts/daily-learning.js
 
-# ===== Gerenciamento do Daemon =====
-
-# Ver logs em tempo real
+# Gerenciamento daemon
 tail -f logs/daemon-v2.log
-
-# Reiniciar daemon V2 (via launchctl - RECOMENDADO)
 launchctl unload ~/Library/LaunchAgents/com.botxposts.daemon.plist
 launchctl load ~/Library/LaunchAgents/com.botxposts.daemon.plist
-
-# Verificar se daemon + caffeinate estao rodando
 ps aux | grep -E "(caffeinate|cron-daemon)" | grep -v grep
 
-# Verificar PID e status do LaunchAgent
-cat logs/daemon-v2.pid
-launchctl list | grep botxposts
-
-# ===== V1 (Legacy) =====
-
-# Status do daemon V1
-launchctl list | grep bot
-
-# Ver logs
-tail -f logs/daemon.log
-tail -f logs/daemon-error.log
-
-# Reiniciar daemon V1
-pkill -9 -f "cron-daemon"
-launchctl unload ~/Library/LaunchAgents/com.botxposts.daemon.plist
-launchctl load ~/Library/LaunchAgents/com.botxposts.daemon.plist
-
-# Testar post manual V1
-node scripts/auto-post.js vibeCoding
-
-# ===== Comum =====
-
-# Verificar Chrome conectado
+# Chrome
 curl -s http://localhost:9222/json/version
 
-# Ver dados de aprendizado
-cat data/learnings.json | jq '.scores'
-
-# Ver log de replies
-cat data/replies-log.json | jq '.stats'
+# Learning V2
+npm run learn|collect|health|restart|report|goals|learn:dry
 ```
 
-## Problemas Conhecidos e Solucoes
+## Problemas Conhecidos
 
-| Problema | Causa | Solucao |
-|----------|-------|---------|
-| `spawn node ENOENT` | PATH nao disponivel no launchd | Usar `/usr/local/bin/node` |
-| Daemons duplicados | plist reiniciando rapido | ThrottleInterval + KeepAlive config |
-| Telegram 409 Conflict | Multiplas instancias polling | Garantir apenas 1 daemon |
-| Aba X nao encontrada | Chrome sem X.com aberto | Codigo abre automaticamente |
-| Timeout com tela bloqueada | App Nap / throttling | Flags anti-suspensao no Chrome |
-| Twitter rate limit | Muitas requisicoes | Cache de 15 min, fallback |
-| Post truncado (so ultimo paragrafo) | execCommand em chunks sobrescreve | Usar clipboard (Cmd+V) |
-| Daemon crash silencioso | `.catch()` em funcao sync | Usar try/catch para unlinkSync |
-| Daemon suspenso (TN status) | macOS suspende processo com tela bloqueada | Wrapper caffeinate -i + heartbeat interno + KeepAlive:true |
+| Problema | Solucao |
+|----------|---------|
+| `spawn node ENOENT` | Usar `/usr/local/bin/node` |
+| Daemons duplicados | ThrottleInterval + KeepAlive config |
+| Telegram 409 Conflict | Garantir apenas 1 daemon |
+| Aba X nao encontrada | Codigo abre automaticamente |
+| Timeout tela bloqueada | Flags anti-suspensao Chrome + caffeinate |
+| Rate limit | Cache 15min + fallback |
+| Post truncado | Usar clipboard (Cmd+V) |
+| `.catch()` em sync | Usar try/catch para unlinkSync |
+| Daemon suspenso (TN) | caffeinate -i + heartbeat + KeepAlive:true |
+| Ano errado nos posts (2024) | Prompt agora inclui `TODAY'S DATE` + regra anti-ano-passado |
+| Hashtags coladas/duplicadas | Regra no prompt: separar com espaco, sem duplicatas |
 
 ## Fluxo de Postagem (V2)
 
-1. Cron dispara a cada 2h (8h-23h, todos os dias)
-2. `curateContentV3()` busca de multiplas fontes em paralelo
-3. Fallback chain: Primary -> Secondary -> RSS
-4. `generatePost()` gera 8 posts (4 topicos x 2 idiomas)
-5. Preview enviado no Telegram (2 min para cancelar)
-6. `postTweet()` digita no X como humano (delays variaveis)
-7. 60s entre cada post (total ~12 min por slot)
-8. Confirmacao no Telegram
-
-## Fluxo de Reply Monitor
-
-1. Cron dispara a cada hora (minuto :30)
-2. `fetchMentions()` busca mencoes recentes via Twitter API
-3. Filtra IDs ja respondidos (evita duplicatas)
-4. `classifyComment()` identifica tipo (question, agreement, joke, etc.)
-5. `selectReplyStyle()` escolhe estilo apropriado (friendly, helpful, funny, etc.)
-6. Claude gera resposta humanizada (max 200 chars + emojis)
-7. `postReply()` publica a resposta no X
-8. Log salvo em `data/replies-log.json` para learning
+1. Cron dispara (8h-23h)
+2. `curateContentV3()` busca multi-fonte em paralelo (fallback: Primary->Secondary->RSS)
+3. `generatePost()` gera 8 posts (4 topicos x 2 idiomas)
+4. Preview Telegram (2min para cancelar)
+5. `postTweet()` digita no X como humano (delays variaveis), 60s entre posts
 
 ## Diferenciacao EN vs PT-BR
 
-### Posts em Ingles
-- System prompt: Global developer perspective
-- Hashtags: #AI #VibeCoding #ClaudeCode #Cursor
-- Tom: Tecnico, direto, internacional
-
-### Posts em Portugues
-- System prompt: @garim (prompt original)
-- Hashtags: #DevBR #ClaudeCode #Cursor #VibeCoding
-- Tom: Pratico, conversacional, brasileiro
-
-**IMPORTANTE:** Ambos na mesma conta @garim, intercalados. NAO sao traducoes - Claude gera independentemente.
+- **EN:** Global dev perspective, #AI #VibeCoding #ClaudeCode, tecnico/direto
+- **PT-BR:** @garim prompt original, #DevBR #ClaudeCode, pratico/conversacional
+- Mesma conta @garim, intercalados. NAO sao traducoes - Claude gera independentemente.
 
 ## Sistema de Variedade: Styles + Hook Frameworks
 
-O `claude-v2.js` implementa um sistema de variedade para evitar posts repetitivos. Cada post e gerado com uma combinacao aleatoria de **STYLE** (tom) e **HOOK** (estrutura de abertura).
+8 POST_STYLES: `hot_take`, `observation`, `question`, `reaction`, `tip`, `sarcasm`, `personal`, `contrarian`
+8 HOOK_FRAMEWORKS: `extreme`, `aida`, `pas`, `bab`, `emotional`, `results`, `client`, `idea`
+**8 x 8 = 64 combinacoes** aleatorias por post. Evita deteccao de bot, parece humano, melhora engagement.
 
-### POST_STYLES (8 estilos de tom)
-
-| Style | EN | PT-BR |
-|-------|----|----|
-| `hot_take` | Strong opinion, controversial | Opiniao forte, controversa |
-| `observation` | Casual "just realized..." | "acabei de perceber..." |
-| `question` | Genuine question to followers | Pergunta genuina |
-| `reaction` | Emotional reaction (surprise, frustration) | Reacao emocional |
-| `tip` | Quick useful tip, not preachy | Dica rapida, sem parecer coach |
-| `sarcasm` | Light ironic humor | Humor ironico leve |
-| `personal` | What YOU are doing/thinking | O que VOCE ta fazendo |
-| `contrarian` | Go against the crowd | Vai contra a manada |
-
-### HOOK_FRAMEWORKS (8 estruturas de abertura)
-
-| Hook | Descricao | Exemplo EN | Exemplo PT-BR |
-|------|-----------|------------|---------------|
-| `extreme` | Extremos: best/worst/most ever | "worst crash ive seen this year" | "pior crash que vi esse ano" |
-| `aida` | Attention-Interest-Desire-Action | "most devs waste hours on X. i did too. then i found Y" | "maioria dos devs perde horas com X. eu tambem perdia" |
-| `pas` | Problem-Agitate-Solution | "context switching kills your flow. been there. this fixed it" | "trocar de contexto mata seu flow. ja passei por isso" |
-| `bab` | Before-After-Bridge (transformacao) | "used to spend 3h debugging. now 20min. the trick?" | "gastava 3h debugando. agora 20min. o truque?" |
-| `emotional` | Lead with raw emotion | "almost rage-quit yesterday. then realized..." | "quase larguei tudo ontem. dai percebi..." |
-| `results` | Lead with results achieved | "shipped 3 features today instead of 1. heres my setup" | "entreguei 3 features hoje ao inves de 1. meu setup" |
-| `client` | Third-party proof (friend/colleague) | "friend asked me to review his code. found this gem" | "amigo pediu pra revisar codigo dele. achei essa perola" |
-| `idea` | One powerful standalone line | "AI wont replace devs. devs using AI will replace devs not using it" | "AI nao vai substituir dev. dev usando AI vai substituir dev sem AI" |
-
-### Combinacao STYLE + HOOK = 64 variacoes
-
-O sistema combina **8 styles x 8 hooks = 64 combinacoes possiveis** para cada idioma.
-
-Exemplos de combinacoes:
-- `hot_take + extreme` = "hot take: worst AI tool ive ever used is..."
-- `sarcasm + bab` = "used to be productive. then discovered twitter. now..."
-- `personal + results` = "just shipped 3 PRs today. my secret? turn off slack"
-- `contrarian + emotional` = "everyone hyped about X and im here worried..."
-
-### Log Output
-
-Durante a geracao, o sistema loga a combinacao escolhida:
-
-```
-   Gerando: crypto (en)...
-      [style: hot_take + hook: extreme]
-   Gerando: crypto (pt-BR)...
-      [style: reaction + hook: pas]
-   Gerando: investing (en)...
-      [style: contrarian + hook: bab]
-```
-
-### Por que isso importa
-
-1. **Evita deteccao de bot** - Posts variam em estrutura e tom
-2. **Parece mais humano** - Pessoas reais alternam entre estilos
-3. **Melhora engajamento** - Diferentes hooks funcionam para diferentes momentos
-4. **Escalabilidade** - 64 combinacoes x 4 topicos x 2 idiomas = alta variedade
-
-### Implementacao tecnica
-
-```javascript
-// Em generatePost()
-const randomStyle = styles[Math.floor(Math.random() * styles.length)]
-const randomHook = hooks[Math.floor(Math.random() * hooks.length)]
-console.log(`      [style: ${randomStyle.name} + hook: ${randomHook.name}]`)
-
-// Prompt inclui ambos:
-// TONE/STYLE: ${randomStyle.instruction}
-// HOOK FRAMEWORK: ${randomHook.instruction}
-// HOOK EXAMPLES: ${randomHook.examples.join(' | ')}
-```
-
-## Sistema de Auto-Aprendizado (Self-Learning)
-
-O bot aprende automaticamente quais combinacoes de HOOK + STYLE geram mais engajamento.
-
-### Arquivos do Sistema
-| Arquivo | Funcao |
-|---------|--------|
-| `src/analytics-monitor.js` | Coleta metricas diarias do X Analytics |
-| `src/learning-engine.js` | Analisa performance, ajusta pesos |
-| `scripts/daily-analysis.js` | Roda as 23:59, gera relatorios |
-| `data/learnings.json` | Scores e pesos por hook/style/topico |
-| `logs/daily-reports/` | Relatorios diarios em JSON |
-
-### Fluxo de Aprendizado
-```
-Dia 1: Posts com selecao aleatoria
-         ↓
-23:59: Analise coleta engajamento
-         ↓
-       Learning engine identifica:
-       - "extreme + hot_take" → alto engajamento → peso 1.4
-       - "tip + idea" → baixo engajamento → peso 0.7
-         ↓
-Dia 2: Posts com pesos ajustados (mais do que funciona)
-```
-
-### Metas Monitoradas
-| Meta | Valor | Para que |
-|------|-------|----------|
-| Impressoes | 5M em 3 meses | Partilha de Receitas |
-| Premium Followers | 500 | Partilha de Receitas |
-| Verified Followers | 2,000 | Subscricoes |
-
-### Comandos
-```bash
-npm run analyze          # Rodar analise manual
-npm run learn            # Ciclo completo de aprendizado
-cat data/learnings.json  # Ver pesos atuais
-```
+Implementacao em `claude-v2.js` `generatePost()` - selecao aleatoria, inclui no prompt como TONE/STYLE + HOOK FRAMEWORK.
 
 ## Sistema de Auto-Aprendizado V2
 
-Sistema inteligente que aprende automaticamente quais combinacoes de HOOK + STYLE + TOPIC + HOUR geram mais engajamento, ajustando pesos dinamicamente para atingir metas de monetizacao.
+Aprende quais HOOK + STYLE + TOPIC + HOUR geram mais engajamento. Ajusta pesos dinamicamente.
 
-### Metas do Projeto (Creator Studio)
+### Metas (Creator Studio)
+- **Partilha de Receitas:** 5M impressoes + 500 premium em 90 dias (~55k/dia)
+- **Subscricoes:** 5M impressoes + 2,000 verified em 90 dias
 
-| Programa | Impressoes | Followers | Deadline | Meta Diaria |
-|----------|------------|-----------|----------|-------------|
-| **Partilha de Receitas** | 5M | 500 premium | 90 dias | ~55k impressoes/dia |
-| **Subscricoes** | 5M | 2,000 verified | 90 dias | ~55k impressoes/dia |
+### Ciclo: Posts com pesos -> 23:59 coleta metricas -> analise Claude -> ajuste pesos -> 00:05 daemon restart -> proximos posts com novos pesos
 
-**Calculo da meta diaria:** 5,000,000 / 90 dias = ~55,556 impressoes/dia
+### Dimensoes de Aprendizado
+Hooks, Styles, Topics, Hours, Experiments - cada com weight (0.3-2.0), uses, totalEngagement
 
-### Ciclo Diario Automatico
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    CICLO DIARIO 24H                         │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  00:01  Health Check                                        │
-│         - Verifica Chrome conectado                         │
-│         - Verifica daemon rodando                           │
-│         - Alerta no Telegram se problema                    │
-│                                                             │
-│  00:05  Restart Diario do Daemon                            │
-│         - Limpa memoria                                     │
-│         - Recarrega configuracoes                           │
-│         - Aplica novos pesos aprendidos                     │
-│                                                             │
-│  08:00-20:00  Posts com Horarios Dinamicos                  │
-│         - Baseado em engagement-hours.json                  │
-│         - Mais posts nos horarios de alto engagement        │
-│         - Menos posts nos horarios de baixo engagement      │
-│                                                             │
-│  23:59  Analise + Learning + Relatorio                      │
-│         - Coleta metricas do dia                            │
-│         - Compara com metas                                 │
-│         - Ajusta pesos para proximo dia                     │
-│         - Envia relatorio no Telegram                       │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Sistema de Aprendizado
-
-O learning engine rastreia e ajusta pesos para 5 dimensoes:
-
-| Dimensao | Descricao | Exemplo de Ajuste |
-|----------|-----------|-------------------|
-| **Hooks** | Framework de abertura | `extreme: 1.3` (mais usado) |
-| **Styles** | Tom do post | `hot_take: 1.2` (engaja mais) |
-| **Topics** | Tema do conteudo | `crypto: 1.4` (trending) |
-| **Hours** | Horario de postagem | `18h: 1.5` (pico de engagement) |
-| **Experiments** | A/B tests | `emoji_start: 0.8` (nao funcionou) |
-
-### Ajuste Automatico de Pesos
-
+### Formula
 ```javascript
-// Formula de ajuste
-newWeight = currentWeight * (1 + (engagementRate - avgEngagement) * learningRate)
-
-// Limites
-MIN_WEIGHT = 0.3  // Nunca para de usar completamente
-MAX_WEIGHT = 2.0  // Nunca domina completamente
-LEARNING_RATE = 0.1  // Ajustes graduais
+newWeight = currentWeight * (1 + (engagementRate - avgEngagement) * 0.1) // LEARNING_RATE=0.1
+// MIN_WEIGHT=0.3, MAX_WEIGHT=2.0
 ```
 
-### Arquivos do Sistema V2
-
-| Arquivo | Funcao |
-|---------|--------|
-| `src/engagement-analyzer.js` | Analisa melhores horarios baseado em dados reais |
-| `src/telegram-report.js` | Formata e envia relatorios diarios |
-| `scripts/daily-learning.js` | Executa ciclo completo de aprendizado |
-| `scripts/daemon-manager.js` | Gerencia start/stop/restart do daemon |
-| `data/GOALS.md` | Metas e acompanhamento de progresso |
-| `data/engagement-hours.json` | Pesos por horario baseado em engagement |
-| `data/learnings.json` | Todos os pesos aprendidos |
-| `logs/daily-reports/` | Historico de relatorios diarios |
-
-### Estrutura do engagement-hours.json
-
-```json
-{
-  "hours": {
-    "8": { "weight": 1.0, "avgEngagement": 450, "samples": 28 },
-    "10": { "weight": 1.2, "avgEngagement": 580, "samples": 28 },
-    "12": { "weight": 0.9, "avgEngagement": 380, "samples": 28 },
-    "14": { "weight": 1.1, "avgEngagement": 520, "samples": 28 },
-    "16": { "weight": 1.3, "avgEngagement": 650, "samples": 28 },
-    "18": { "weight": 1.5, "avgEngagement": 820, "samples": 28 },
-    "20": { "weight": 1.4, "avgEngagement": 750, "samples": 28 }
-  },
-  "lastUpdated": "2026-02-03T23:59:00Z"
-}
-```
-
-### Estrutura do learnings.json
-
-```json
-{
-  "hooks": {
-    "extreme": { "weight": 1.3, "uses": 45, "totalEngagement": 12500 },
-    "aida": { "weight": 1.1, "uses": 38, "totalEngagement": 9200 },
-    "pas": { "weight": 0.9, "uses": 42, "totalEngagement": 8100 }
-  },
-  "styles": {
-    "hot_take": { "weight": 1.4, "uses": 52, "totalEngagement": 15800 },
-    "sarcasm": { "weight": 1.2, "uses": 35, "totalEngagement": 9500 }
-  },
-  "topics": {
-    "crypto": { "weight": 1.3, "uses": 120, "totalEngagement": 45000 },
-    "ai": { "weight": 1.1, "uses": 120, "totalEngagement": 38000 }
-  },
-  "lastLearning": "2026-02-03T23:59:00Z",
-  "totalDays": 15
-}
-```
-
-### Comandos V2
-
-```bash
-# Ciclo completo de aprendizado (coleta + analise + ajuste)
-npm run learn
-
-# Apenas coleta de metricas
-npm run collect
-
-# Health check do sistema
-npm run health
-
-# Reinicia daemon aplicando novos pesos
-npm run restart
-
-# Ver relatorio do dia
-npm run report
-
-# Ver progresso vs metas
-npm run goals
-
-# Testar analise sem salvar
-npm run learn:dry
-```
-
-### Metricas Rastreadas
-
-| Metrica | Fonte | Frequencia | Meta |
-|---------|-------|------------|------|
-| Impressoes/dia | X Analytics | Diario | 55k/dia |
-| Engagement rate | Calculado | Por post | >2% |
-| Premium followers | X Creator Studio | Diario | 500 em 90d |
-| Verified followers | X Creator Studio | Diario | 2,000 em 90d |
-| Hook performance | learnings.json | Diario | Top 3 identificados |
-| Style performance | learnings.json | Diario | Top 3 identificados |
-| Best hours | engagement-hours.json | Semanal | Top 3 horarios |
-
-### Relatorio Diario no Telegram
-
-```
-=== RELATORIO DIARIO (02/02/2026) ===
-
-IMPRESSOES: 62,450 / 55,556 meta (+12.4%)
-ENGAJAMENTO: 2.8% (media: 2.1%)
-FOLLOWERS: +12 (8 premium, 4 verified)
-
-TOP HOOKS HOJE:
-1. extreme (1,850 eng/post)
-2. bab (1,420 eng/post)
-3. results (1,380 eng/post)
-
-TOP STYLES HOJE:
-1. hot_take (2,100 eng/post)
-2. contrarian (1,650 eng/post)
-3. personal (1,400 eng/post)
-
-TOP HORARIOS:
-1. 18h (820 avg engagement)
-2. 20h (750 avg engagement)
-3. 16h (650 avg engagement)
-
-PROGRESSO METAS:
-- Impressoes: 842k / 5M (16.8%) - 12 dias
-- Premium: 68 / 500 (13.6%)
-- Verified: 245 / 2,000 (12.3%)
-
-AJUSTES APLICADOS:
-- extreme: 1.2 -> 1.3 (+8.3%)
-- hot_take: 1.3 -> 1.4 (+7.7%)
-- 18h: 1.4 -> 1.5 (+7.1%)
-```
-
-### Fluxo do Aprendizado V2
-
-```
-┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│   Dia N: Posts   │────>│  23:59: Coleta   │────>│  Analise Claude  │
-│  com pesos atuais│     │    metricas      │     │   identifica     │
-└──────────────────┘     └──────────────────┘     │   padroes        │
-                                                   └────────┬─────────┘
-                                                            │
-                                                            ▼
-┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│ Dia N+1: Posts   │<────│ 00:05: Daemon    │<────│ Ajuste de Pesos  │
-│ com novos pesos  │     │    restart       │     │   automatico     │
-└──────────────────┘     └──────────────────┘     └──────────────────┘
-```
-
-### Integracao com Sistema V1
-
-O sistema V2 e **retro-compativel** com V1:
-
-- Se `data/learnings.json` nao existir, usa pesos iguais (1.0)
-- Se `data/engagement-hours.json` nao existir, usa horarios fixos
-- Comandos V1 (`npm run start`, `npm run analyze`) continuam funcionando
-- Daemon V1 pode coexistir com V2 (mas recomenda-se usar apenas V2)
+### Arquivos: `src/engagement-analyzer.js`, `src/telegram-report.js`, `scripts/daily-learning.js`, `scripts/daemon-manager.js`, `data/GOALS.md`, `data/engagement-hours.json`, `data/learnings.json`
 
 ## Reply Monitor (DESATIVADO)
 
-> **Status:** DESATIVADO - Foco atual em posts + analytics + metas de monetização.
-
-Sistema que monitora mencoes e comentarios nos posts, gerando respostas humanizadas com Claude.
-O código está pronto em `src/reply-monitor.js` mas não está sendo executado pelo daemon.
-
-### Arquivos
-| Arquivo | Funcao |
-|---------|--------|
-| `src/reply-monitor.js` | Busca mencoes, classifica, gera e posta respostas |
-| `data/replies-log.json` | Log de todas respostas enviadas |
-| `data/replied-ids.json` | IDs ja respondidos (evita duplicatas) |
-
-### Ciclo de Execucao
-- **Frequencia:** A cada hora (minuto :30)
-- **Max por ciclo:** 5 respostas
-- **Delay entre respostas:** 30 segundos
-
-### Classificacao de Comentarios
-
-| Tipo | Detecta | Prioridade | Estilos de Resposta |
-|------|---------|------------|---------------------|
-| `question` | ?, como, how, what, why | Alta | helpful, friendly |
-| `disagreement` | discordo, disagree, mas, but | Alta | friendly, curious |
-| `agreement` | concordo, agree, exactly, fato | Media | grateful, friendly |
-| `compliment` | great, awesome, top, mito | Media | grateful, funny |
-| `joke` | kk, lol, haha, rsrs | Baixa | funny, friendly |
-| `generic` | (fallback) | Baixa | friendly, grateful |
-
-### Estilos de Resposta (REPLY_STYLES)
-
-| Estilo | Tom | Emojis |
-|--------|-----|--------|
-| `friendly` | Super amigavel e caloroso | 😊🙌✨ |
-| `helpful` | Prestativo e informativo, mas leve | 💡👍📚 |
-| `funny` | Bem humorado, piada leve | 😂🤣💀 |
-| `grateful` | Agradece genuinamente | 🙏❤️🔥 |
-| `curious` | Interesse genuino, pergunta de volta | 🤔👀💭 |
-
-### Fluxo de Aprendizado de Replies
-```
-1. Recebe mencao → Classifica tipo do comentario
-2. Seleciona estilo baseado no tipo
-3. Claude gera resposta humanizada (max 200 chars + emojis)
-4. Posta reply no X
-5. Loga para analise posterior
-6. Learning engine analisa quais estilos performam melhor
-```
-
-### Comandos
-```bash
-# Via daemon interativo
-reply (rp)              # Executa ciclo de replies manualmente
-
-# Direto
-node src/reply-monitor.js            # Executa ciclo real
-node src/reply-monitor.js --dry-run  # Simula sem postar
-```
-
-### Regras de Geracao de Respostas
-- SEMPRE usar emojis (2-4 por resposta)
-- Ser educado, gentil e bem humorado
-- Respostas CURTAS (max 200 chars)
-- NUNCA parecer robo ou formal
-- Usar portugues brasileiro casual
-- Se for pergunta, responder de forma util
-- Se for elogio, agradecer genuinamente
-- Se for critica, ser respeitoso mas manter opiniao
-- Se for piada, entrar na brincadeira
-
-### Exemplos de Respostas Geradas
-```
-Comentario: "Como voce faz isso?"
-Resposta: "@usuario boa pergunta! 🤔 na real, depende muito do contexto, mas geralmente... 💡"
-
-Comentario: "kkkk exatamente isso"
-Resposta: "@usuario 😂🙌 glad you get it!"
-
-Comentario: "Discordo, acho que BTC vai subir"
-Resposta: "@usuario hmm interessante ponto de vista 👀 o que te faz pensar isso?"
-```
+Codigo pronto em `src/reply-monitor.js`. Monitora mencoes, classifica comentarios (question/disagreement/agreement/compliment/joke/generic), gera respostas humanizadas com Claude (max 200 chars + emojis). Dados: `data/replies-log.json`, `data/replied-ids.json`.
 
 ## Sistema de Threads com Imagens
 
-Threads geram 5-10x mais impressões que posts únicos. O sistema inclui geração automática de threads com imagem no primeiro tweet.
+Threads geram 5-10x mais impressoes. 2/dia as 10h e 18h, em EN, com imagem no 1o tweet.
 
-### Estratégia de Threads
+### Thread Frameworks: `story` (narrativa), `listicle` (lista), `breakdown` (explicacao), `contrarian` (hot take)
 
-| Config | Valor | Motivo |
-|--------|-------|--------|
-| **Horários** | 10h e 18h | Pico global (10h) e BR (18h) |
-| **Idioma** | Inglês (EN) | Alcance 10x maior |
-| **Imagem** | Primeiro tweet | Para o scroll, aumenta CTR |
-| **Frequência** | 2 threads/dia | Não saturar seguidores |
+### Estrutura: 1/ Hook+imagem -> 2/ Contexto -> 3/ Insight -> 4/ Aplicacao -> 5/ CTA+hashtags
 
-### Como Funciona
+### Fluxo: Verifica horario thread -> curadoria seleciona melhor topico -> Claude gera 5 tweets -> Gemini gera imagem -> Multi-tweet composer (abre, insere, +, repete, posta)
 
-```
-┌─────────────────────────────────────────────────┐
-│           THREAD GENERATION (10h/18h)            │
-│                                                 │
-│  1. Verifica se é horário de thread             │
-│  2. Curadoria identifica melhor tópico          │
-│  3. Claude gera thread de 5 tweets              │
-│  4. Gemini gera imagem para 1º tweet            │
-│  5. Primeiro tweet tem 🧵 + hook + imagem       │
-└─────────────────────────────────────────────────┘
-           │
-           ▼
-┌─────────────────────────────────────────────────┐
-│      THREAD POSTING (Multi-Tweet Composer)       │
-│                                                 │
-│  1. Abre composer, insere tweet 1               │
-│  2. Upload da imagem no tweet 1                 │
-│  3. Clica "+" e insere tweet 2, 3, 4, 5         │
-│  4. Clica "Postar" uma vez                      │
-│  5. Resultado: thread conectada com imagem      │
-└─────────────────────────────────────────────────┘
-```
-
-### Thread Frameworks (4 tipos)
-
-| Framework | Descrição | Quando usar |
-|-----------|-----------|-------------|
-| `story` | Arco narrativo: setup → tensão → resolução | Histórias pessoais, jornadas |
-| `listicle` | Lista numerada de insights | Dicas, lições, descobertas |
-| `breakdown` | Explica tema complexo em partes | Educacional, análises |
-| `contrarian` | Desafia sabedoria convencional | Hot takes, opiniões fortes |
-
-### Estrutura de uma Thread
-
-```
-1/ Hook que para o scroll 🧵
-
----
-
-2/ Contexto/Problema
-
----
-
-3/ Insight principal
-
----
-
-4/ Aplicação prática
-
----
-
-5/ Conclusão + CTA + hashtags
-```
-
-### Arquivos do Sistema
-
-| Arquivo | Função |
-|---------|--------|
-| `src/claude-v2.js` | `generateThread()` e `generateBestThread()` |
-| `src/puppeteer-post.js` | `postThread()` - posta sequência de replies |
-| `scripts/auto-post-v2.js` | Integração com fluxo de postagem |
-| `scripts/test-thread.js` | Script de teste de threads |
+### Config em `auto-post-v2.js`: `THREAD_HOURS=[10,18]`, `THREAD_LANGUAGE='en'`, `THREAD_WITH_IMAGE=true`
 
 ### Comandos
-
 ```bash
-# Testar geração de thread (sem postar)
-node scripts/test-thread.js                  # Auto-seleciona melhor tópico
-node scripts/test-thread.js crypto en        # Tópico e idioma específicos
-node scripts/test-thread.js ai pt-BR         # Thread em português
-
-# Postar thread (cuidado!)
-node scripts/test-thread.js crypto en --post
+node scripts/test-thread.js [crypto en] [--post]
 ```
 
-### Configuração
+## Geracao de Imagens (Gemini)
 
-Em `scripts/auto-post-v2.js`:
-
-```javascript
-const THREAD_HOURS = [10, 18]  // Horários de thread (pico global e BR)
-const THREAD_LANGUAGE = 'en'   // Idioma das threads (en alcança mais)
-const THREAD_WITH_IMAGE = true // Gera imagem para primeiro tweet
-```
-
-### Fluxo de Postagem com Thread
-
-1. **Thread primeiro** (maior potencial de engajamento)
-2. **Imagem no 1º tweet** (para o scroll)
-3. **90s de delay** (evita flood)
-4. **Posts individuais** (8 posts normais)
-
-### Por que Threads Funcionam
-
-| Métrica | Post único | Thread 5 tweets |
-|---------|------------|-----------------|
-| Impressões médias | ~1K | ~5-50K |
-| Engajamento | 1-2% | 3-8% |
-| Salvamentos | Raro | Comum |
-| Compartilhamentos | Raro | Frequente |
-
-Threads contam uma história → pessoas leem até o fim → algoritmo promove.
-
-## Sistema de Geração de Imagens
-
-Imagens são geradas automaticamente para o primeiro tweet de cada thread usando a API do Gemini (Google).
-
-### API e Configuração
-
-| Config | Valor |
-|--------|-------|
-| **API** | Google Gemini (Nano Banana) |
-| **Modelo** | `gemini-2.0-flash-exp-image-generation` |
-| **Resolução** | 1024 x 574 (16:9) |
-| **Custo** | Grátis (tier gratuito) |
-| **Env var** | `GOOGLE_GEMINI_API_KEY` |
-
-### Como Funciona
-
-```
-Tweet Text + Topic
-       │
-       ▼
-┌─────────────────────────────┐
-│    generateImagePrompt()     │
-│                             │
-│  Analisa texto do tweet:    │
-│  - Bullish → verde/gold     │
-│  - Bearish → vermelho       │
-│  - Tópico → elementos       │
-│  - Estilo → cyberpunk/chart │
-└─────────────────────────────┘
-       │
-       ▼
-┌─────────────────────────────┐
-│      Gemini API (Imagen)     │
-│                             │
-│  Gera imagem 1024x574       │
-│  Salva em /tmp/bot-x-images │
-└─────────────────────────────┘
-       │
-       ▼
-┌─────────────────────────────┐
-│   uploadImageToComposer()    │
-│                             │
-│  Puppeteer faz upload       │
-│  no composer do X           │
-└─────────────────────────────┘
-```
-
-### Estilos de Imagem
-
-| Estilo | Uso | Resultado |
-|--------|-----|-----------|
-| `cyber` | Crypto, AI | Neon, futurista, dark |
-| `chart` | Investing | Data viz, infográfico |
-| `modern` | Geral | Clean, minimalista |
-| `abstract` | VibeCoding | Geométrico, gradientes |
-
-### Comandos
-
-```bash
-# Testar geração de imagem
-node src/image-generator.js
-
-# Testar thread com imagem (sem postar)
-node scripts/test-thread.js crypto en
-
-# Ver imagens geradas
-ls -la /tmp/bot-x-images/
-
-# Limpar imagens antigas
-rm /tmp/bot-x-images/*.png
-```
-
-### Arquivos
-
-| Arquivo | Função |
-|---------|--------|
-| `src/image-generator.js` | `generateImage()`, `generateImagePrompt()` |
-| `src/puppeteer-post.js` | `uploadImageToComposer()`, `postTweetWithImage()` |
+- API: Google Gemini, modelo `gemini-2.0-flash-exp-image-generation`
+- Resolucao 1024x574 (16:9), gratis, env `GOOGLE_GEMINI_API_KEY`
+- Estilos: `cyber` (crypto/AI), `chart` (investing), `modern` (geral), `abstract` (vibeCoding)
+- Arquivos: `src/image-generator.js`, salva em `/tmp/bot-x-images/`
 
 ## Notas de Desenvolvimento
 
 - Posts max 500 chars
 - Digitacao humanizada: 70-130ms entre chars, pausas apos pontuacao
-- 60 segundos entre posts multiplos
-- Retry automatico: 3 tentativas na conexao Chrome, 2 no post
-- Cache: 30 min fresco, 4h stale para fallback
+- 60s entre posts, retry 3x conexao Chrome, 2x post
+- Cache: 30min fresco, 4h stale
 
 ## Premissas e Licoes Aprendidas
 
-### Insercao de Texto no X (IMPORTANTE)
-| Metodo | Funciona? | Problema |
-|--------|-----------|----------|
-| `execCommand('insertText')` em chunks | NAO | Cada chunk sobrescreve o anterior |
-| `keyboard.type()` char por char | SIM (lento) | ~100ms por char, OK para fallback |
-| **Clipboard (Cmd+V)** | **SIM** | **Metodo principal - mais confiavel** |
+### Insercao de Texto no X
+- **Clipboard (Cmd+V)** = metodo principal, mais confiavel
+- `execCommand('insertText')` funciona para single insert (nao chunks)
+- `keyboard.type()` char por char = fallback lento
+- **Emojis:** usar `for...of` (code points), colar emojis via clipboard. Iteracao por indice quebra surrogate pairs.
 
-**SEMPRE usar clipboard para textos longos.** A insercao via DOM em chunks perde texto.
-
-### Funcoes Sync vs Async (Node.js)
-| Funcao | Tipo | Tem .catch()? |
-|--------|------|---------------|
-| `fs.unlinkSync()` | Sync | NAO - usar try/catch |
-| `fs.unlink()` | Async (callback) | NAO - usar promisify |
-| `fs.promises.unlink()` | Async (Promise) | SIM |
-
-**NUNCA usar `.catch()` em funcoes sync.** Causa crash silencioso.
-
-### Daemon e Hot Reload
-- Daemon usa `spawn()` para executar scripts
-- Codigo e carregado do disco A CADA execucao
-- **NAO precisa reiniciar daemon** apos editar `auto-post.js` ou `puppeteer-post.js`
-- So reiniciar se editar `cron-daemon.js` (o proprio daemon)
+### Node.js
+- `fs.unlinkSync()` = sync, usar try/catch (NAO .catch())
+- Daemon spawn() recarrega codigo do disco - NAO precisa reiniciar para editar scripts
+- So reiniciar se editar `cron-daemon-v2.js`
 
 ### Verificacao de Posts
-Sempre logar no puppeteer-post.js:
-1. Quantos chars foram inseridos vs esperado
-2. Primeiros 100 chars do texto final (para debug)
-3. Se texto < 80% do esperado, avisar antes de postar
+Logar: chars inseridos vs esperado, primeiros 100 chars, avisar se < 80%.
 
-## Historico de Commits
-- **2026-02-05 11:06** [`fd439c6`] Update CLAUDE.md with commit history (.claude/CLAUDE.md)
-- **2026-02-05 10:59** [`9634221`] Add Thread System with AI-generated Images (Gemini) (.claude/CLAUDE.md,scripts/auto-post-v2.js,scripts/test-thread.js,src/claude-v2.js,src/image-generator.js)
-- **2026-02-04 21:14** [`9178ea2`] Improve posting reliability + disable Reply Monitor (.claude/CLAUDE.md,scripts/cron-daemon-v2.js,src/puppeteer-post.js,src/reply-monitor.js)
-- **2026-02-04 20:57** Disable Reply Monitor, focus on posts + analytics + goals
-- **2026-02-04 18:30** Improve puppeteer-post.js: better tab handling, context error recovery, retry logic
-- **2026-02-04 15:33** [`dc694f2`] Add Reply Monitor: auto-respond to comments with Claude (.claude/CLAUDE.md,scripts/cron-daemon-v2.js,src/reply-monitor.js)
-- **2026-02-04 13:27** Add Reply Monitor: auto-respond to comments with Claude (src/reply-monitor.js, scripts/cron-daemon-v2.js, .claude/CLAUDE.md)
-- **2026-02-04 10:30** [`4a000b5`] Update schedule: post every 2h from 8h to 23h (72 posts/day) (scripts/cron-daemon-v2.js)
-- **2026-02-04 10:20** [`6c85cc1`] Add Self-Learning V2 System with Goals Tracking (.claude/CLAUDE.md,data/GOALS.md,package.json,scripts/cron-daemon-v2.js,scripts/daemon-manager.js)
-- **2026-02-03 20:09** [`3cce8fb`] Document self-learning system in CLAUDE.md (.claude/CLAUDE.md)
-- **2026-02-03 20:09** [`1ec2efe`] Add Hook Frameworks + Self-Learning Analytics System (.claude/CLAUDE.md,package.json,scripts/auto-post-v2.js,scripts/cron-daemon-v2.js,scripts/daily-analysis.js)
-- **2026-02-03** Document Hook Frameworks: 8 styles x 8 hooks = 64 combinations (.claude/CLAUDE.md)
-- **2026-02-02 19:13** [`5b070e7`] Document lessons learned: clipboard for text, sync vs async, hot reload (.claude/CLAUDE.md)
-- **2026-02-02 19:07** [`3f7b9c5`] Fix text truncation: use clipboard instead of chunked DOM insert (src/puppeteer-post.js)
-- **2026-02-02 16:33** [`bc9f5ba`] Fix daemon crash: unlinkSync is sync, not async (scripts/cron-daemon.js)
-- **2026-02-02 09:55** [`9f07b6a`] Add multi-source bilingual posting system (v2) (.gitignore,scripts/auto-post-v2.js,scripts/cron-daemon-v2.js,scripts/test-curate-v3.js,scripts/test-generate-v2.js)
-- **2026-01-31 14:24** [`68b36b1`] Update CLAUDE.md commit history (.claude/CLAUDE.md)
-- **2026-01-31 13:19** [`595d0e1`] Add singleton check to prevent duplicate daemon instances (scripts/cron-daemon.js)
-- **2026-01-31 11:07** [`c2e5217`] Change schedule from Mon-Fri to Mon-Sat (1-6) (.claude/CLAUDE.md,scripts/cron-daemon.js)
-- **2026-01-31 09:11** [`df9c934`] Document curadoria v2 with hashtags, authors, mentions in CLAUDE.md (.claude/CLAUDE.md)
-- **2026-01-31 09:07** [`99e6329`] Improve curate-v2: add authors, hashtags, mentions + optimize rate limits (scripts/test-curate-v2.js,src/curate-v2.js)
-- **2026-01-30 21:34** [`4afae02`] Update CLAUDE.md with commit history from hook (.claude/CLAUDE.md)
-- **2026-01-30 21:32** [`a5e3a5a`] Add post-commit hook to track changes in CLAUDE.md (.claude/CLAUDE.md,.claude/hooks/post-commit-summary.sh)
-
-- **2026-01-30 19:56** [`f820a89`] Add curate-v2 with real-time data and fix daemon issues (src/curate-v2.js, scripts/auto-post.js, src/puppeteer-post.js, scripts/cron-daemon.js, .claude/CLAUDE.md)
-- **2026-01-30 15:32** [`b8ce216`] Add anti-suspension measures for Chrome timeout issues
-- **2026-01-30 14:23** [`2325973`] Fix first post failure by navigating to /home before posting
+## Historico de Commits (Recentes)
+- **2026-02-06 11:15** [`071e535`] Fix wrong year (2024) in posts and duplicate/stuck hashtags (.claude/CLAUDE.md,src/claude-v2.js)
+- **2026-02-06 11:15** [`071e535`] Fix wrong year (2024) in posts and duplicate hashtags (src/claude-v2.js)
+- **2026-02-06 09:49** [`dfbadff`] Add watchdog to detect and recover missed cron triggers (scripts/cron-daemon-v2.js)
+- `affdda7` Fix emoji rendering (for...of + clipboard)
+- `fb7070d` Fix daemon suspension (caffeinate + heartbeat + KeepAlive)
+- `9634221` Add Thread System with AI-generated Images (Gemini)
+- `9178ea2` Improve posting reliability + disable Reply Monitor
+- `dc694f2` Add Reply Monitor
+- `4a000b5` Update schedule: post every 2h
+- `6c85cc1` Add Self-Learning V2 System with Goals Tracking
+- `1ec2efe` Add Hook Frameworks + Self-Learning Analytics
+- `3f7b9c5` Fix text truncation: clipboard instead of chunked DOM
+- `9f07b6a` Add multi-source bilingual posting system (v2)
