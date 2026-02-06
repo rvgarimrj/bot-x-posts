@@ -154,6 +154,11 @@ export async function searchViralTweets(topic = 'ai', options = {}) {
       return results
     }, limit * 2) // Fetch extra to allow filtering
 
+    // Navigate back to /home to not leave search tab open
+    try {
+      await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 15000 })
+    } catch {}
+
     // Filter and sort
     const filtered = tweets
       .filter(t => t.likes >= minLikes)

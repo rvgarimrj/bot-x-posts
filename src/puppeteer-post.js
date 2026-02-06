@@ -377,7 +377,7 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
     // Verifica com seletor específico (activeEl.textContent pode incluir texto de outros elementos)
     let insertedText = await page.evaluate(() => {
       const el = document.querySelector('[data-testid="tweetTextarea_0"]')
-      return el ? el.textContent : ''
+      return el ? (el.innerText || el.textContent || '') : ''
     })
 
     if (insertedText.length < text.length * 0.8) {
@@ -426,7 +426,7 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
       // Verifica resultado
       insertedText = await page.evaluate(() => {
         const el = document.querySelector('[data-testid="tweetTextarea_0"]')
-        return el ? el.textContent : ''
+        return el ? (el.innerText || el.textContent || '') : ''
       })
 
       console.log(`   Texto inserido: ${insertedText.length}/${text.length} chars`)
@@ -455,7 +455,7 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
     // Verificação final do texto - rejeita se < 90%
     const finalText = await page.evaluate(() => {
       const el = document.querySelector('[data-testid="tweetTextarea_0"]')
-      return el ? el.textContent : ''
+      return el ? (el.innerText || el.textContent || '') : ''
     })
 
     const insertRatio = finalText.length / text.length
@@ -495,7 +495,7 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
       // Verifica de novo
       const retryText = await page.evaluate(() => {
         const el = document.querySelector('[data-testid="tweetTextarea_0"]')
-        return el ? el.textContent : ''
+        return el ? (el.innerText || el.textContent || '') : ''
       })
 
       const retryRatio = retryText.length / text.length
@@ -535,29 +535,47 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
     // Espera botao estar habilitado
     await new Promise(r => setTimeout(r, 1000))
 
-    // Clica no botao Postar usando evaluate (mais confiavel)
-    console.log('🚀 Clicando em Postar...')
-    await page.evaluate((sel) => {
-      const btn = document.querySelector(sel)
-      if (btn) {
-        btn.click()
-        console.log('Clicou no botao')
-      }
-    }, '[data-testid="tweetButton"]')
+    // Verifica se botao está desabilitado
+    const isDisabled = await page.evaluate((el) => {
+      return el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true'
+    }, postBtn)
 
-    // Aguarda um pouco
-    await new Promise(r => setTimeout(r, 2000))
-
-    // Tenta clicar novamente se ainda existir (as vezes precisa 2 cliques)
-    const stillExists = await page.$('[data-testid="tweetButton"]')
-    if (stillExists) {
-      console.log('   Clicando novamente...')
-      await stillExists.click()
-      await new Promise(r => setTimeout(r, 3000))
+    if (isDisabled) {
+      throw new Error('Botao Postar está desabilitado')
     }
 
+    // Clica no botao Postar usando Puppeteer click (mais confiavel que evaluate)
+    console.log('🚀 Clicando em Postar...')
+    await postBtn.click()
+    await new Promise(r => setTimeout(r, 3000))
+
     // Verifica se modal fechou (indica sucesso)
-    const modalClosed = !(await page.$('[data-testid="tweetTextarea_0"]'))
+    let modalClosed = !(await page.$('[data-testid="tweetTextarea_0"]'))
+    if (!modalClosed) {
+      // Tenta clicar novamente com seletores alternativos
+      console.log('   Tentando novamente...')
+      const altSelectors = [
+        '[data-testid="tweetButton"]',
+        '[data-testid="tweetButtonInline"]',
+        '[aria-label="Post"]',
+        '[aria-label="Postar"]'
+      ]
+      for (const sel of altSelectors) {
+        const altBtn = await page.$(sel)
+        if (altBtn) {
+          const altDisabled = await page.evaluate((el) => {
+            return el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true'
+          }, altBtn)
+          if (!altDisabled) {
+            await altBtn.click()
+            await new Promise(r => setTimeout(r, 3000))
+            break
+          }
+        }
+      }
+      modalClosed = !(await page.$('[data-testid="tweetTextarea_0"]'))
+    }
+
     if (modalClosed) {
       console.log('   ✅ Modal fechou - post enviado!')
     } else {
@@ -944,7 +962,7 @@ async function insertTextInComposerField(page, text, fieldIndex) {
       if (activeEl && activeEl.isContentEditable) {
         // Foca e insere via execCommand
         document.execCommand('insertText', false, textToInsert)
-        return activeEl.textContent || ''
+        return activeEl.innerText || activeEl.textContent || ''
       }
       return ''
     }, text)
@@ -957,22 +975,20 @@ async function insertTextInComposerField(page, text, fieldIndex) {
     // ========== MÉTODO 2: Clipboard via textarea (mais confiável) ==========
     console.log('   ⚠️ execCommand falhou, tentando clipboard via textarea...')
 
-    // Clear ALL content from the contenteditable (handles multi-paragraph divs)
-    await page.evaluate((idx) => {
-      const el = document.querySelector(`[data-testid="tweetTextarea_${idx}"]`)
-      if (el) {
-        // Clear all child nodes (X creates <div> per paragraph)
-        while (el.firstChild) el.removeChild(el.firstChild)
-        el.textContent = ''
-      }
-    }, fieldIndex)
-    await new Promise(r => setTimeout(r, 300))
-    // Also do Cmd+A + Backspace as safety
+    // Clear via Cmd+A + Backspace (React-safe, triggers proper events)
     await textbox.click()
     await new Promise(r => setTimeout(r, 200))
     await page.keyboard.down('Meta')
     await page.keyboard.press('a')
     await page.keyboard.up('Meta')
+    await new Promise(r => setTimeout(r, 100))
+    await page.keyboard.press('Backspace')
+    await new Promise(r => setTimeout(r, 300))
+    // Second pass in case multi-paragraph didn't fully clear
+    await page.keyboard.down('Meta')
+    await page.keyboard.press('a')
+    await page.keyboard.up('Meta')
+    await new Promise(r => setTimeout(r, 100))
     await page.keyboard.press('Backspace')
     await new Promise(r => setTimeout(r, 300))
 
@@ -1009,7 +1025,7 @@ async function insertTextInComposerField(page, text, fieldIndex) {
     // Verifica se texto foi inserido
     const insertedText = await page.evaluate((idx) => {
       const el = document.querySelector(`[data-testid="tweetTextarea_${idx}"]`)
-      return el ? el.textContent : ''
+      return el ? (el.innerText || el.textContent || '') : ''
     }, fieldIndex)
 
     if (insertedText.length >= text.length * 0.8) {
@@ -1019,20 +1035,19 @@ async function insertTextInComposerField(page, text, fieldIndex) {
     // ========== MÉTODO 3: InputEvent (último recurso com emojis) ==========
     console.log('   ⚠️ Clipboard falhou, tentando InputEvent...')
 
-    // Clear ALL content thoroughly
-    await page.evaluate((idx) => {
-      const el = document.querySelector(`[data-testid="tweetTextarea_${idx}"]`)
-      if (el) {
-        while (el.firstChild) el.removeChild(el.firstChild)
-        el.textContent = ''
-      }
-    }, fieldIndex)
-    await new Promise(r => setTimeout(r, 200))
+    // Clear via Cmd+A + Backspace (React-safe)
     await textbox.click()
     await new Promise(r => setTimeout(r, 200))
     await page.keyboard.down('Meta')
     await page.keyboard.press('a')
     await page.keyboard.up('Meta')
+    await new Promise(r => setTimeout(r, 100))
+    await page.keyboard.press('Backspace')
+    await new Promise(r => setTimeout(r, 300))
+    await page.keyboard.down('Meta')
+    await page.keyboard.press('a')
+    await page.keyboard.up('Meta')
+    await new Promise(r => setTimeout(r, 100))
     await page.keyboard.press('Backspace')
     await new Promise(r => setTimeout(r, 300))
 
@@ -1056,7 +1071,7 @@ async function insertTextInComposerField(page, text, fieldIndex) {
           range.insertNode(document.createTextNode(textToInsert))
         }
 
-        return el.textContent || ''
+        return el.innerText || el.textContent || ''
       }
       return ''
     }, text, fieldIndex)
