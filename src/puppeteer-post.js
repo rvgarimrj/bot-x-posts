@@ -452,20 +452,60 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
     console.log('   Relendo antes de postar...')
     await new Promise(r => setTimeout(r, Math.random() * 2000 + 2000))
 
-    // Verificação final do texto
+    // Verificação final do texto - rejeita se < 90%
     const finalText = await page.evaluate(() => {
       const el = document.querySelector('[data-testid="tweetTextarea_0"]')
       return el ? el.textContent : ''
     })
 
-    if (finalText.length < text.length * 0.5) {
-      console.log(`   ❌ Texto final muito curto (${finalText.length}/${text.length} chars)`)
-      console.log(`   Conteúdo: "${finalText.slice(0, 100)}..."`)
-      throw new Error(`Texto truncado: ${finalText.length}/${text.length} chars inseridos`)
-    }
+    const insertRatio = finalText.length / text.length
 
-    if (finalText.length < text.length * 0.8) {
-      console.log(`   ⚠️ AVISO: Texto final (${finalText.length} chars) menor que esperado (${text.length} chars)`)
+    if (insertRatio < 0.9) {
+      console.log(`   ⚠️ Texto incompleto (${finalText.length}/${text.length} chars = ${Math.round(insertRatio * 100)}%)`)
+
+      // Tenta uma última vez: limpa tudo e usa clipboard
+      console.log('   🔄 Última tentativa: limpando e colando via clipboard...')
+      await page.keyboard.down('Meta')
+      await page.keyboard.press('a')
+      await page.keyboard.up('Meta')
+      await page.keyboard.press('Backspace')
+      await new Promise(r => setTimeout(r, 500))
+
+      // Clipboard via textarea oculto
+      await page.evaluate((textToInsert) => {
+        const temp = document.createElement('textarea')
+        temp.value = textToInsert
+        temp.style.position = 'fixed'
+        temp.style.left = '-9999px'
+        temp.style.opacity = '0'
+        document.body.appendChild(temp)
+        temp.select()
+        temp.setSelectionRange(0, textToInsert.length)
+        document.execCommand('copy')
+        document.body.removeChild(temp)
+      }, text)
+
+      await textbox.click()
+      await new Promise(r => setTimeout(r, 300))
+      await page.keyboard.down('Meta')
+      await page.keyboard.press('v')
+      await page.keyboard.up('Meta')
+      await new Promise(r => setTimeout(r, 1500))
+
+      // Verifica de novo
+      const retryText = await page.evaluate(() => {
+        const el = document.querySelector('[data-testid="tweetTextarea_0"]')
+        return el ? el.textContent : ''
+      })
+
+      const retryRatio = retryText.length / text.length
+      if (retryRatio < 0.9) {
+        console.log(`   ❌ Texto ainda incompleto após retry (${retryText.length}/${text.length} chars = ${Math.round(retryRatio * 100)}%)`)
+        console.log(`   Conteúdo: "${retryText.slice(0, 100)}..."`)
+        throw new Error(`Texto truncado: ${retryText.length}/${text.length} chars inseridos (${Math.round(retryRatio * 100)}%)`)
+      }
+
+      console.log(`   ✅ Retry funcionou! (${retryText.length}/${text.length} chars)`)
     }
 
     console.log('   ✅ Texto inserido')
