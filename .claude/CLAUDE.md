@@ -14,7 +14,7 @@ Bot automatizado para postar no X (Twitter) via Puppeteer conectado ao Chrome em
 
 ## Arquitetura V2
 
-Cron (8h-23h) -> Curate-V3 (multi-fonte paralelo, cache 30min/4h) -> Claude-V2 (analise + geracao bilingue, 8 styles x 8 hooks) -> Telegram Preview (2min) -> Puppeteer Post (60s entre posts, digitacao humanizada)
+Cron (8h-23h) -> Curate-V3 (multi-fonte paralelo, cache 30min/4h) -> Claude-V2 (analise + geracao bilingue, 8 styles x 8 hooks) -> Media Fetch (Reddit meme + X quote tweet) -> Telegram Preview (2min) -> Puppeteer Post (60s entre posts, digitacao humanizada)
 
 ## Horarios e Topicos (TODOS OS DIAS)
 
@@ -50,6 +50,9 @@ Cron (8h-23h) -> Curate-V3 (multi-fonte paralelo, cache 30min/4h) -> Claude-V2 (
 | `src/image-generator.js` | Gera imagens via Gemini API |
 | `src/puppeteer-post.js` | Posta tweets/threads com imagens via Chrome |
 | `src/reply-monitor.js` | Monitora e responde comentarios (DESATIVADO) |
+| `src/media-downloader.js` | Download de midia (video/image/gif) + Gemini safety check |
+| `src/sources/reddit-media.js` | Busca memes virais do Reddit (video/image/gif) |
+| `src/sources/x-viral-search.js` | Busca tweets virais no X para quote tweet |
 | `src/learning-engine.js` | Analisa performance, ajusta pesos |
 | `src/analytics-monitor.js` | Coleta metricas do X Analytics |
 | `src/engagement-analyzer.js` | Analisa melhores horarios por regiao |
@@ -240,6 +243,42 @@ Threads geram 5-10x mais impressoes. 2/dia as 10h e 18h, em EN, com imagem no 1o
 node scripts/test-thread.js [crypto en] [--post]
 ```
 
+## Sistema de Media Posts (Video Memes + Quote Tweets)
+
+Posts com midia (videos, imagens, GIFs) geram 10-100x mais engagement. 2 media posts por ciclo, substituem 2 posts EN de texto.
+
+### Pipeline A: Reddit Memes
+- Busca memes virais de subreddits por topico (ProgrammerHumor, CryptoCurrency, etc.)
+- Suporta video, image e GIF
+- Filtros: score >= 500, age < 7 days, NSFW check, keyword relevance
+- Safety check via Gemini Vision (3 camadas: Reddit over_18, Gemini Vision, Telegram preview)
+- Caption gerada por Claude (100-200 chars, witty reaction)
+- Download para /tmp/bot-x-media/, max 50MB video / 10MB image
+- Cache 30min
+
+### Pipeline B: X Quote Tweets
+- Busca tweets virais via Puppeteer search no X
+- Queries por topico (min_faves:100-500, filter:media)
+- Commentary gerada por Claude (100-200 chars, adds perspective)
+- Post via Quote Tweet (URL auto-embeds no composer)
+- Zero copyright risk (atribuicao automatica)
+- Cache 60min
+
+### Fluxo no auto-post-v2.js
+Step 2.7a: fetchRedditMedia() -> downloadMedia() -> checkMediaSafety() -> generateVideoCaption()
+Step 2.7b: searchViralTweets() -> generateQuoteComment()
+Substitui 2 posts EN de texto -> Telegram preview com indicadores de midia -> postTweetWithVideo()/postQuoteTweet()
+Fallback: se midia falha, posta como texto normal
+
+### Comandos
+```bash
+node scripts/test-video-meme.js              # Dry run: fetch + download + caption
+node scripts/test-video-meme.js --post       # Post a real video meme
+node scripts/test-video-meme.js --quote      # Test quote tweet flow
+node scripts/test-video-meme.js --all        # Test both pipelines
+node scripts/test-video-meme.js [topic]      # Specify topic
+```
+
 ## Geracao de Imagens (Gemini)
 
 - API: Google Gemini, modelo `gemini-2.0-flash-exp-image-generation`
@@ -271,6 +310,7 @@ node scripts/test-thread.js [crypto en] [--post]
 Verificacao final exige 90% do texto. Se < 90%, retry via clipboard. Se ainda falha, erro (trigger retry do post inteiro).
 
 ## Historico de Commits (Recentes)
+- **2026-02-06 12:24** [`cfbe48e`] Update documentation with today's fixes (.claude/CLAUDE.md)
 - **2026-02-06** [`269ba13`] Stricter text verification: reject posts <90% + retry clipboard
 - **2026-02-06** [`a718ad2`] Fix text truncation undetected + false-positive post success
 - **2026-02-06** [`64004d7`] Consolidate Telegram notifications into single summary

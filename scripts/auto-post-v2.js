@@ -11,10 +11,13 @@
 import 'dotenv/config'
 import fs from 'fs'
 import path from 'path'
-import { generatePost, generateBestThread } from '../src/claude-v2.js'
+import { generatePost, generateBestThread, generateVideoCaption, generateQuoteComment } from '../src/claude-v2.js'
 import { curateContentV3, formatForPrompt, getFallbackContentV3 } from '../src/curate-v3.js'
-import { postTweet, postThread } from '../src/puppeteer-post.js'
+import { postTweet, postThread, postTweetWithVideo, postTweetWithImage, postQuoteTweet } from '../src/puppeteer-post.js'
 import { generateImage, generateImagePrompt, cleanupTempImages } from '../src/image-generator.js'
+import { fetchRedditMedia } from '../src/sources/reddit-media.js'
+import { downloadMedia, checkMediaSafety, downloadThumbnail, cleanupTempMedia } from '../src/media-downloader.js'
+import { searchViralTweets } from '../src/sources/x-viral-search.js'
 import TelegramBot from 'node-telegram-bot-api'
 
 // ==================== CONFIGURATION ====================
@@ -267,8 +270,154 @@ async function main() {
     console.log(`\n2.5. Pulando thread (horário ${hour}h não é horário de thread - threads às ${THREAD_HOURS.join('h e ')}h)`)
   }
 
-  // Cleanup old temp images
+  // Cleanup old temp images/media
   cleanupTempImages()
+  cleanupTempMedia()
+
+  // ==================== 2.7 FETCH MEDIA CONTENT ====================
+
+  let mediaMeme = null    // Reddit meme (video/image/gif)
+  let quoteTarget = null  // Viral tweet to quote
+
+  console.log('\n2.7. Buscando conteudo de midia...')
+
+  // 2.7a: Fetch Reddit media (1 meme)
+  try {
+    console.log('   2.7a. Buscando meme viral do Reddit...')
+    // Pick a random topic for the meme (prefer topics with good meme subreddits)
+    const memeTopics = ['ai', 'vibeCoding', 'crypto', 'general']
+    const memeTopic = memeTopics[Math.floor(Math.random() * memeTopics.length)]
+
+    const redditMedia = await fetchRedditMedia(memeTopic, { minScore: 500, limit: 5 })
+
+    if (redditMedia.length > 0) {
+      // Try each media post until one downloads and passes safety
+      for (const media of redditMedia) {
+        console.log(`   Tentando: "${media.title.substring(0, 60)}..." (${media.mediaType}, ${media.score} upvotes)`)
+
+        // Safety check via thumbnail first (cheaper than downloading full media)
+        if (media.thumbnailUrl) {
+          const thumbResult = await downloadThumbnail(media.thumbnailUrl)
+          if (thumbResult.success) {
+            const safetyResult = await checkMediaSafety(thumbResult.path)
+            if (!safetyResult.safe) {
+              console.log(`   ⚠️ Unsafe content (${safetyResult.reason}), pulando...`)
+              try { fs.unlinkSync(thumbResult.path) } catch {}
+              continue
+            }
+            try { fs.unlinkSync(thumbResult.path) } catch {}
+          }
+        }
+
+        // Download the actual media
+        const dlResult = await downloadMedia(media.mediaUrl, media.mediaType)
+        if (!dlResult.success) {
+          console.log(`   ⚠️ Download falhou: ${dlResult.error}`)
+          continue
+        }
+
+        // Generate caption with Claude
+        const caption = await generateVideoCaption(
+          { title: media.title, subreddit: media.subreddit, score: media.score, mediaType: media.mediaType },
+          memeTopic,
+          'en'
+        )
+
+        mediaMeme = {
+          ...media,
+          topic: memeTopic,
+          localPath: dlResult.path,
+          caption: caption.text,
+          _metadata: caption._metadata
+        }
+
+        console.log(`   ✅ Meme selecionado: ${media.mediaType} de r/${media.subreddit} (${media.score} upvotes)`)
+        console.log(`   Caption: "${caption.text.substring(0, 80)}..."`)
+        break
+      }
+
+      if (!mediaMeme) {
+        console.log('   ⚠️ Nenhum meme passou nos filtros de seguranca/download')
+      }
+    } else {
+      console.log('   ⚠️ Nenhum meme encontrado no Reddit')
+    }
+  } catch (err) {
+    console.log(`   ⚠️ Erro ao buscar meme: ${err.message}`)
+  }
+
+  // 2.7b: Search X for viral tweet to quote
+  try {
+    console.log('\n   2.7b. Buscando tweet viral para quote...')
+    // Pick topic - prefer ai/vibeCoding for quote tweets (more interesting demos)
+    const quoteTopic = Math.random() < 0.6 ? 'ai' : (Math.random() < 0.5 ? 'vibeCoding' : 'crypto')
+
+    const viralTweets = await searchViralTweets(quoteTopic, { limit: 5, minLikes: 100 })
+
+    if (viralTweets.length > 0) {
+      // Pick the most liked tweet
+      const target = viralTweets[0]
+
+      // Generate quote comment
+      const comment = await generateQuoteComment(
+        { text: target.text, authorHandle: target.authorHandle, likes: target.likes },
+        quoteTopic,
+        'en'
+      )
+
+      quoteTarget = {
+        ...target,
+        commentary: comment.text,
+        _metadata: comment._metadata
+      }
+
+      console.log(`   ✅ Quote target: @${target.authorHandle} (${target.likes} likes)`)
+      console.log(`   Comment: "${comment.text.substring(0, 80)}..."`)
+    } else {
+      console.log('   ⚠️ Nenhum tweet viral encontrado')
+    }
+  } catch (err) {
+    console.log(`   ⚠️ Erro ao buscar quote tweet: ${err.message}`)
+  }
+
+  // Replace EN text posts with media posts (if available)
+  if (mediaMeme || quoteTarget) {
+    console.log('\n   Substituindo posts de texto por media...')
+    const enPosts = posts.filter(p => p.language === 'en')
+
+    if (mediaMeme && enPosts.length >= 1) {
+      // Replace first EN text post with meme
+      const idx = posts.indexOf(enPosts[0])
+      posts[idx] = {
+        ...posts[idx],
+        post: mediaMeme.caption,
+        mediaType: 'meme',
+        mediaPath: mediaMeme.localPath,
+        mediaFileType: mediaMeme.mediaType, // 'video', 'image', 'gif'
+        hook: mediaMeme._metadata?.hook,
+        style: mediaMeme._metadata?.style,
+        experiment: null,
+        _mediaSource: `r/${mediaMeme.subreddit}`
+      }
+      console.log(`   ✅ Post ${idx + 1} substituido por meme (${mediaMeme.mediaType})`)
+    }
+
+    if (quoteTarget && enPosts.length >= 2) {
+      // Replace second EN text post with quote tweet
+      const idx = posts.indexOf(enPosts[1])
+      posts[idx] = {
+        ...posts[idx],
+        post: quoteTarget.commentary,
+        mediaType: 'quote',
+        quoteTweetUrl: quoteTarget.tweetUrl,
+        hook: quoteTarget._metadata?.hook,
+        style: quoteTarget._metadata?.style,
+        experiment: null,
+        _quoteAuthor: quoteTarget.authorHandle
+      }
+      console.log(`   ✅ Post ${idx + 1} substituido por quote tweet (@${quoteTarget.authorHandle})`)
+    }
+  }
 
   // ==================== 3. TELEGRAM PREVIEW ====================
 
@@ -291,7 +440,15 @@ async function main() {
 
     for (const p of topicPosts) {
       const flag = getLanguageFlag(p.language)
-      previewMsg += `${flag} "${escapeHtml(p.post.substring(0, 150))}${p.post.length > 150 ? '...' : ''}"\n`
+      // Media indicators
+      let mediaTag = ''
+      if (p.mediaType === 'meme') {
+        const typeEmoji = p.mediaFileType === 'video' ? '🎬' : p.mediaFileType === 'gif' ? '🎞️' : '📷'
+        mediaTag = ` ${typeEmoji} via ${p._mediaSource}`
+      } else if (p.mediaType === 'quote') {
+        mediaTag = ` 💬 QT @${p._quoteAuthor}`
+      }
+      previewMsg += `${flag} "${escapeHtml(p.post.substring(0, 150))}${p.post.length > 150 ? '...' : ''}"${mediaTag}\n`
     }
     previewMsg += `\n`
   }
@@ -440,19 +597,78 @@ async function main() {
   // ========== 5.2 POST INDIVIDUAL TWEETS ==========
 
   for (let i = 0; i < posts.length; i++) {
-    const { topic, language, post } = posts[i]
+    const postData = posts[i]
+    const { topic, language, post } = postData
     const emoji = getTopicEmoji(topic)
     const flag = getLanguageFlag(language)
     const label = `${topic} ${language === 'en' ? 'EN' : 'PT'}`
 
-    console.log(`\n📤 Postando [${i + 1}/${posts.length}] ${label}...`)
+    let result = null
 
-    const result = await postWithRetry(post)
+    // Determine post type and use appropriate method
+    if (postData.mediaType === 'meme' && postData.mediaPath) {
+      // Media meme post (video/image/gif from Reddit)
+      const typeLabel = postData.mediaFileType === 'video' ? 'video' : postData.mediaFileType === 'gif' ? 'gif' : 'image'
+      console.log(`\n📤 Postando [${i + 1}/${posts.length}] ${label} (${typeLabel} meme)...`)
+
+      if (postData.mediaFileType === 'video') {
+        result = await postTweetWithVideo(post, postData.mediaPath, true)
+      } else {
+        // Image or GIF - use image upload
+        result = await postTweetWithImage(post, postData.mediaPath, true)
+      }
+
+      if (!result.success) {
+        // Retry once
+        console.log(`   ⚠️ Media post falhou, tentando retry...`)
+        await new Promise(r => setTimeout(r, 10000))
+        if (postData.mediaFileType === 'video') {
+          result = await postTweetWithVideo(post, postData.mediaPath, true)
+        } else {
+          result = await postTweetWithImage(post, postData.mediaPath, true)
+        }
+      }
+
+      if (!result.success) {
+        // Fallback: post as text only
+        console.log(`   ⚠️ Media falhou, postando como texto...`)
+        result = await postWithRetry(post)
+      }
+
+    } else if (postData.mediaType === 'quote' && postData.quoteTweetUrl) {
+      // Quote tweet
+      console.log(`\n📤 Postando [${i + 1}/${posts.length}] ${label} (quote tweet @${postData._quoteAuthor})...`)
+
+      result = await postQuoteTweet(post, postData.quoteTweetUrl, true)
+
+      if (!result.success) {
+        // Retry once
+        console.log(`   ⚠️ Quote tweet falhou, tentando retry...`)
+        await new Promise(r => setTimeout(r, 10000))
+        result = await postQuoteTweet(post, postData.quoteTweetUrl, true)
+      }
+
+      if (!result.success) {
+        // Fallback: post commentary as text only
+        console.log(`   ⚠️ Quote falhou, postando como texto...`)
+        result = await postWithRetry(post)
+      }
+
+    } else {
+      // Normal text post
+      console.log(`\n📤 Postando [${i + 1}/${posts.length}] ${label}...`)
+      result = await postWithRetry(post)
+    }
 
     if (result.success) {
       successCount++
       console.log(`   ✅ Publicado!`)
-      logPostedTweet(posts[i])
+      logPostedTweet({
+        ...postData,
+        // Override type for logging
+        hook: postData.hook || 'unknown',
+        style: postData.style || 'unknown'
+      })
     } else {
       console.log(`   ❌ Erro: ${result.error}`)
       errors.push(`${emoji}${flag} ${topic.toUpperCase()}: ${result.error}`)
@@ -468,10 +684,17 @@ async function main() {
   // ==================== 6. SUMMARY ====================
 
   const threadStr = thread ? (threadSuccess ? ' + 🧵 thread' : ' (thread falhou)') : ''
-  console.log(`\n✅ Finalizado: ${successCount}/${posts.length} posts publicados${threadStr}`)
+  const mediaStr = mediaMeme ? ' + 🎬 meme' : ''
+  const quoteStr = quoteTarget ? ' + 💬 quote' : ''
+  console.log(`\n✅ Finalizado: ${successCount}/${posts.length} posts publicados${threadStr}${mediaStr}${quoteStr}`)
+
+  // Cleanup downloaded media
+  if (mediaMeme?.localPath) {
+    try { fs.unlinkSync(mediaMeme.localPath) } catch {}
+  }
 
   // Single summary notification
-  let summaryMsg = `✅ <b>${successCount}/${posts.length}</b> posts publicados${threadStr}`
+  let summaryMsg = `✅ <b>${successCount}/${posts.length}</b> posts publicados${threadStr}${mediaStr}${quoteStr}`
   if (errors.length > 0) {
     summaryMsg += `\n\n⚠️ <b>${errors.length} erro(s):</b>\n${errors.map(e => `• ${escapeHtml(e)}`).join('\n')}`
   }

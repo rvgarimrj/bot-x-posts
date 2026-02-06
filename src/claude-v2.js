@@ -943,12 +943,186 @@ export async function generateBestThread(curated, language = 'en') {
   }
 }
 
+// ==================== MEDIA CAPTION GENERATION ====================
+
+/**
+ * Generate a witty caption for a Reddit video/image meme
+ * @param {Object} videoContext - Context about the media
+ * @param {string} videoContext.title - Reddit post title
+ * @param {string} videoContext.subreddit - Source subreddit
+ * @param {number} videoContext.score - Reddit upvotes
+ * @param {string} videoContext.mediaType - 'video', 'image', 'gif'
+ * @param {string} topic - Topic (crypto, investing, ai, vibeCoding)
+ * @param {string} language - Language code (default 'en')
+ * @returns {Promise<Object>} Generated caption with metadata
+ */
+export async function generateVideoCaption(videoContext, topic, language = 'en') {
+  const selectedStyle = selectStyle(language)
+  const selectedHook = selectHook(language)
+
+  console.log(`      [caption: style=${selectedStyle.name}, hook=${selectedHook.name}]`)
+
+  const now = new Date()
+  const currentYear = now.getFullYear()
+
+  const systemPrompt = language === 'en'
+    ? `You're a real dev/trader on X sharing content. Write a SINGLE-LINE caption (80-150 chars MAX).
+
+CONTENT TYPE MATTERS:
+- MEME/FUNNY: Be genuinely funny. React like you're dying laughing. Add your own joke. Use "lol", "lmao", "ngl", "fr", "tbh" naturally.
+- INFORMATIVE/COOL: Smart take with humor. Show why it matters.
+
+STRICT Rules:
+- Output MUST be a SINGLE LINE of text followed by hashtags. NO line breaks. NO paragraphs.
+- Format: "your caption text #Hashtag1 #Hashtag2"
+- ONE reaction or joke - don't explain what the content shows
+- Do NOT reference Reddit, subreddits, or any source
+- 1-2 relevant hashtags at the END (space-separated, NO duplicates, each unique)
+- NEVER sound like AI. Sound like YOUR take, not a reshare`
+    : `Voce e um dev/trader BR no X compartilhando conteudo. Escreva uma legenda em UMA UNICA LINHA (80-150 chars MAX).
+
+TIPO DE CONTEUDO IMPORTA:
+- MEME/ENGRACADO: Seja genuinamente engracado. Reaja rindo. Adicione piada. Use "kkkk", "mano", "pqp", "carai".
+- INFORMATIVO/COOL: Insight inteligente com humor. Mostre por que importa.
+
+Regras ESTRITAS:
+- Output DEVE ser UMA UNICA LINHA seguida de hashtags. SEM quebras de linha. SEM paragrafos.
+- Formato: "texto da legenda #Hashtag1 #Hashtag2"
+- UMA reacao ou piada - nao explique o que o conteudo mostra
+- NAO referencie Reddit, subreddits ou qualquer fonte
+- 1-2 hashtags relevantes no FINAL (separadas por espaco, SEM duplicatas, cada uma unica)
+- NUNCA soe como IA`
+
+  const userPrompt = `CONTENT:
+Title: "${videoContext.title}"
+Type: ${videoContext.mediaType} (${videoContext.score > 5000 ? 'super viral' : videoContext.score > 1000 ? 'viral' : 'popular'})
+Topic: ${topic}
+
+TONE: ${selectedStyle.instruction}
+HOOK: ${selectedHook.instruction}
+
+IMPORTANT: Write ONE SINGLE LINE (80-150 chars). NO line breaks. NO multiple paragraphs. Just one punchy sentence + 1-2 hashtags. If funny content, be FUNNY. If informative, add value with humor. Year: ${currentYear}.`
+
+  const message = await anthropic.messages.create({
+    model: 'claude-opus-4-5-20251101',
+    max_tokens: 100,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userPrompt }]
+  })
+
+  let text = message.content[0].text.trim()
+    .replace(/^["']|["']$/g, '') // Remove wrapping quotes
+
+  // Post-process: force single line, deduplicate hashtags
+  text = text.replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim()
+
+  // Deduplicate hashtags
+  const hashtagMatches = text.match(/#\w+/g) || []
+  const seen = new Set()
+  for (const tag of hashtagMatches) {
+    if (seen.has(tag.toLowerCase())) {
+      // Remove duplicate (only the second+ occurrence)
+      text = text.replace(new RegExp(`\\s*${tag.replace('#', '\\#')}`, ''), '')
+    }
+    seen.add(tag.toLowerCase())
+  }
+  text = text.replace(/\s+/g, ' ').trim()
+
+  return {
+    text,
+    _metadata: {
+      hook: selectedHook.name,
+      style: selectedStyle.name,
+      type: 'video_meme',
+      topic,
+      language,
+      chars: text.length,
+      generatedAt: new Date().toISOString()
+    }
+  }
+}
+
+/**
+ * Generate a comment for a quote tweet of a viral post
+ * @param {Object} tweetContext - Context about the original tweet
+ * @param {string} tweetContext.text - Original tweet text
+ * @param {string} tweetContext.authorHandle - Original author
+ * @param {number} tweetContext.likes - Like count
+ * @param {string} topic - Topic (crypto, investing, ai, vibeCoding)
+ * @param {string} language - Language code (default 'en')
+ * @returns {Promise<Object>} Generated comment with metadata
+ */
+export async function generateQuoteComment(tweetContext, topic, language = 'en') {
+  const selectedStyle = selectStyle(language)
+  const selectedHook = selectHook(language)
+
+  console.log(`      [quote: style=${selectedStyle.name}, hook=${selectedHook.name}]`)
+
+  const now = new Date()
+  const currentYear = now.getFullYear()
+
+  const systemPrompt = language === 'en'
+    ? `You're a dev/trader on X quote-tweeting a viral post. Write a SHORT comment (100-200 chars) that adds YOUR perspective.
+
+Rules:
+- Add value: your opinion, reaction, or insight
+- Don't just repeat what they said
+- Sound like texting a friend, not writing an essay
+- Can agree, disagree, add context, or react emotionally
+- 0-1 hashtags (separated by space)
+- NEVER sound like AI. No "Interestingly", "Notably", "Furthermore", etc.
+- Make people want to engage with YOUR take`
+    : `Voce e um dev/trader BR no X fazendo quote tweet de um post viral. Escreva um comentario CURTO (100-200 chars) que adiciona SUA perspectiva.
+
+Regras:
+- Adicione valor: sua opiniao, reacao, ou insight
+- Nao repita o que disseram
+- Som de mensagem pra amigo
+- 0-1 hashtags (separadas por espaco)
+- NUNCA soe como IA`
+
+  const userPrompt = `ORIGINAL TWEET:
+Author: @${tweetContext.authorHandle}
+Text: "${tweetContext.text}"
+Likes: ${tweetContext.likes}
+Topic: ${topic}
+
+TONE: ${selectedStyle.instruction}
+HOOK: ${selectedHook.instruction}
+
+Write a short quote-tweet comment (100-200 chars). Just the comment text. We are in ${currentYear}.`
+
+  const message = await anthropic.messages.create({
+    model: 'claude-opus-4-5-20251101',
+    max_tokens: 200,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userPrompt }]
+  })
+
+  const text = message.content[0].text.trim()
+
+  return {
+    text,
+    _metadata: {
+      hook: selectedHook.name,
+      style: selectedStyle.name,
+      type: 'quote_tweet',
+      topic,
+      language,
+      chars: text.length,
+      generatedAt: new Date().toISOString()
+    }
+  }
+}
+
 export default {
   generatePost,
   generateAllPosts,
   generateMultiplePosts,
   generateThread,
   generateBestThread,
+  generateVideoCaption,
+  generateQuoteComment,
   getLearningStats,
   getExperimentNames,
   getAllExperiments

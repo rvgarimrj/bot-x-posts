@@ -957,6 +957,19 @@ async function insertTextInComposerField(page, text, fieldIndex) {
     // ========== MÉTODO 2: Clipboard via textarea (mais confiável) ==========
     console.log('   ⚠️ execCommand falhou, tentando clipboard via textarea...')
 
+    // Clear ALL content from the contenteditable (handles multi-paragraph divs)
+    await page.evaluate((idx) => {
+      const el = document.querySelector(`[data-testid="tweetTextarea_${idx}"]`)
+      if (el) {
+        // Clear all child nodes (X creates <div> per paragraph)
+        while (el.firstChild) el.removeChild(el.firstChild)
+        el.textContent = ''
+      }
+    }, fieldIndex)
+    await new Promise(r => setTimeout(r, 300))
+    // Also do Cmd+A + Backspace as safety
+    await textbox.click()
+    await new Promise(r => setTimeout(r, 200))
     await page.keyboard.down('Meta')
     await page.keyboard.press('a')
     await page.keyboard.up('Meta')
@@ -1006,6 +1019,17 @@ async function insertTextInComposerField(page, text, fieldIndex) {
     // ========== MÉTODO 3: InputEvent (último recurso com emojis) ==========
     console.log('   ⚠️ Clipboard falhou, tentando InputEvent...')
 
+    // Clear ALL content thoroughly
+    await page.evaluate((idx) => {
+      const el = document.querySelector(`[data-testid="tweetTextarea_${idx}"]`)
+      if (el) {
+        while (el.firstChild) el.removeChild(el.firstChild)
+        el.textContent = ''
+      }
+    }, fieldIndex)
+    await new Promise(r => setTimeout(r, 200))
+    await textbox.click()
+    await new Promise(r => setTimeout(r, 200))
     await page.keyboard.down('Meta')
     await page.keyboard.press('a')
     await page.keyboard.up('Meta')
@@ -1351,6 +1375,268 @@ export async function postTweetWithImage(text, imagePath, keepBrowserOpen = true
 
   } catch (err) {
     console.error('❌ Erro ao postar com imagem:', err.message)
+    if (browser) browser.disconnect()
+    return { success: false, error: err.message }
+  }
+}
+
+// ==================== VIDEO UPLOAD ====================
+
+/**
+ * Post a tweet with a video file
+ * Similar to postTweetWithImage but with longer wait times for video processing
+ * @param {string} text - Tweet text (caption)
+ * @param {string} videoPath - Path to video file
+ * @param {boolean} keepBrowserOpen - Keep browser connected after posting
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+export async function postTweetWithVideo(text, videoPath, keepBrowserOpen = true) {
+  let browser = null
+  let page = null
+
+  try {
+    console.log('🔌 Conectando ao Chrome...')
+    browser = await connectToChrome()
+
+    await closeExcessTabs(browser)
+
+    const tabResult = await findOrCreateXTab(browser, false)
+    page = tabResult.page
+
+    console.log('📄 Usando aba:', page.url())
+
+    page.setDefaultTimeout(PAGE_TIMEOUT)
+    page.setDefaultNavigationTimeout(PAGE_TIMEOUT)
+
+    await page.bringToFront()
+
+    // Navega para /home
+    const currentUrl = page.url()
+    if (!currentUrl.includes('x.com/home')) {
+      console.log('🔄 Navegando para /home...')
+      await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 30000 })
+      await new Promise(r => setTimeout(r, 3000))
+    }
+
+    // Aguarda estar logado
+    console.log('⏳ Aguardando pagina carregar...')
+    await page.waitForSelector('[data-testid="SideNav_NewTweet_Button"]', { timeout: 15000 })
+    console.log('✅ Logado no X')
+
+    // Abre composer
+    console.log('📝 Abrindo composer...')
+    const postBtn = await page.$('[data-testid="SideNav_NewTweet_Button"]')
+    if (postBtn) {
+      await postBtn.click()
+      await new Promise(r => setTimeout(r, 2000))
+    }
+
+    // Insere texto
+    const insertResult = await insertTextInComposerField(page, text, 0)
+    if (!insertResult.success) {
+      return { success: false, error: `Falhou ao inserir texto: ${insertResult.error}` }
+    }
+
+    // Upload video - uses generic file input (not image-specific)
+    console.log('🎬 Fazendo upload do video...')
+    const uploadResult = await uploadMediaToComposer(page, videoPath)
+    if (!uploadResult.success) {
+      console.log(`   ⚠️ Video não anexado: ${uploadResult.error}`)
+      // Continue without video (post text only)
+    }
+
+    // Wait longer for video processing (6-8s)
+    console.log('   ⏳ Aguardando processamento do video...')
+    await new Promise(r => setTimeout(r, 8000))
+
+    // Posta
+    console.log('🚀 Postando...')
+    const postResult = await clickPostAllButton(page)
+
+    if (!postResult.success) {
+      return { success: false, error: postResult.error }
+    }
+
+    // Wait longer for video posts (5s)
+    await new Promise(r => setTimeout(r, 5000))
+
+    // Verify modal closed
+    const modalStillOpen = await page.$('[data-testid="tweetTextarea_0"]')
+    if (modalStillOpen) {
+      // Try clicking post again
+      console.log('   ⚠️ Modal ainda aberto, tentando novamente...')
+      await clickPostAllButton(page)
+      await new Promise(r => setTimeout(r, 5000))
+    }
+
+    console.log('✅ Tweet com video publicado!')
+
+    if (!keepBrowserOpen && browser) {
+      browser.disconnect()
+    }
+
+    return { success: true }
+
+  } catch (err) {
+    console.error('❌ Erro ao postar com video:', err.message)
+    if (browser) browser.disconnect()
+    return { success: false, error: err.message }
+  }
+}
+
+/**
+ * Upload any media file (video, image, gif) to the composer
+ * More generic than uploadImageToComposer - doesn't filter by accept="image"
+ * @param {Page} page - Puppeteer page
+ * @param {string} mediaPath - Path to media file
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+async function uploadMediaToComposer(page, mediaPath) {
+  try {
+    const fs = await import('fs')
+    if (!fs.existsSync(mediaPath)) {
+      return { success: false, error: `Arquivo não encontrado: ${mediaPath}` }
+    }
+
+    // Look for ANY file input (not just image-specific ones)
+    let fileInput = await page.$('input[type="file"]')
+
+    if (!fileInput) {
+      // Try clicking media button to reveal input
+      const mediaButtonSelectors = [
+        '[aria-label="Add photos or video"]',
+        '[aria-label="Adicionar fotos ou vídeo"]',
+        '[aria-label="Media"]',
+        '[aria-label="Mídia"]'
+      ]
+
+      for (const selector of mediaButtonSelectors) {
+        const btn = await page.$(selector)
+        if (btn) {
+          await btn.click()
+          await new Promise(r => setTimeout(r, 1000))
+          break
+        }
+      }
+
+      fileInput = await page.$('input[type="file"]')
+    }
+
+    if (!fileInput) {
+      return { success: false, error: 'Não encontrou input de arquivo para upload' }
+    }
+
+    await fileInput.uploadFile(mediaPath)
+    await new Promise(r => setTimeout(r, 2000))
+
+    console.log('   ✅ Media upload enviado')
+    return { success: true }
+
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+}
+
+// ==================== QUOTE TWEET ====================
+
+/**
+ * Post a quote tweet (retweet with comment)
+ * Types commentary and pastes tweet URL which auto-embeds as quote
+ * @param {string} commentary - Your comment text
+ * @param {string} tweetUrl - URL of the tweet to quote
+ * @param {boolean} keepBrowserOpen - Keep browser connected
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+export async function postQuoteTweet(commentary, tweetUrl, keepBrowserOpen = true) {
+  let browser = null
+  let page = null
+
+  try {
+    console.log('🔌 Conectando ao Chrome...')
+    browser = await connectToChrome()
+
+    await closeExcessTabs(browser)
+
+    const tabResult = await findOrCreateXTab(browser, false)
+    page = tabResult.page
+
+    console.log('📄 Usando aba:', page.url())
+
+    page.setDefaultTimeout(PAGE_TIMEOUT)
+    page.setDefaultNavigationTimeout(PAGE_TIMEOUT)
+
+    await page.bringToFront()
+
+    // Navega para /home
+    const currentUrl = page.url()
+    if (!currentUrl.includes('x.com/home')) {
+      console.log('🔄 Navegando para /home...')
+      await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 30000 })
+      await new Promise(r => setTimeout(r, 3000))
+    }
+
+    // Aguarda estar logado
+    console.log('⏳ Aguardando pagina carregar...')
+    await page.waitForSelector('[data-testid="SideNav_NewTweet_Button"]', { timeout: 15000 })
+    console.log('✅ Logado no X')
+
+    // Abre composer
+    console.log('📝 Abrindo composer...')
+    const postBtn = await page.$('[data-testid="SideNav_NewTweet_Button"]')
+    if (postBtn) {
+      await postBtn.click()
+      await new Promise(r => setTimeout(r, 2000))
+    }
+
+    // Insert commentary + tweet URL together
+    // X auto-detects the tweet URL and embeds it as a quote
+    const fullText = `${commentary}\n\n${tweetUrl}`
+
+    const insertResult = await insertTextInComposerField(page, fullText, 0)
+    if (!insertResult.success) {
+      return { success: false, error: `Falhou ao inserir texto: ${insertResult.error}` }
+    }
+
+    // Wait for X to detect and embed the quote tweet URL
+    console.log('   ⏳ Aguardando embed do quote tweet...')
+    await new Promise(r => setTimeout(r, 4000))
+
+    // Check if quote tweet card appeared
+    const hasCard = await page.$('[data-testid="card.wrapper"], [data-testid="quoteTweet"]')
+    if (hasCard) {
+      console.log('   ✅ Quote tweet card detectado')
+    } else {
+      console.log('   ⚠️ Quote tweet card não detectado (pode ainda funcionar)')
+    }
+
+    // Posta
+    console.log('🚀 Postando quote tweet...')
+    const postResult = await clickPostAllButton(page)
+
+    if (!postResult.success) {
+      return { success: false, error: postResult.error }
+    }
+
+    await new Promise(r => setTimeout(r, 3000))
+
+    // Verify modal closed
+    const modalStillOpen = await page.$('[data-testid="tweetTextarea_0"]')
+    if (modalStillOpen) {
+      console.log('   ⚠️ Modal ainda aberto, tentando novamente...')
+      await clickPostAllButton(page)
+      await new Promise(r => setTimeout(r, 3000))
+    }
+
+    console.log('✅ Quote tweet publicado!')
+
+    if (!keepBrowserOpen && browser) {
+      browser.disconnect()
+    }
+
+    return { success: true }
+
+  } catch (err) {
+    console.error('❌ Erro ao postar quote tweet:', err.message)
     if (browser) browser.disconnect()
     return { success: false, error: err.message }
   }
