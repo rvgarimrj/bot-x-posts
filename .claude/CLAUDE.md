@@ -170,7 +170,7 @@ npm run learn|collect|health|restart|report|goals|learn:dry
 | Aba X nao encontrada | Codigo abre automaticamente |
 | Timeout tela bloqueada | Flags anti-suspensao Chrome + caffeinate |
 | Rate limit | Cache 15min + fallback |
-| Post truncado | Usar clipboard (Cmd+V) |
+| Post truncado | Verificacao 90% + retry clipboard + erro se falhar |
 | `.catch()` em sync | Usar try/catch para unlinkSync |
 | Daemon suspenso (TN) | caffeinate -i + heartbeat + KeepAlive:true |
 | Ano errado nos posts (2024) | Prompt agora inclui `TODAY'S DATE` + regra anti-ano-passado |
@@ -268,11 +268,13 @@ node scripts/test-thread.js [crypto en] [--post]
 - So reiniciar se editar `cron-daemon-v2.js`
 
 ### Verificacao de Posts
-Logar: chars inseridos vs esperado, primeiros 100 chars, avisar se < 80%.
+Verificacao final exige 90% do texto. Se < 90%, retry via clipboard. Se ainda falha, erro (trigger retry do post inteiro).
 
 ## Historico de Commits (Recentes)
-- **2026-02-06 11:15** [`071e535`] Fix wrong year (2024) in posts and duplicate/stuck hashtags (.claude/CLAUDE.md,src/claude-v2.js)
-- **2026-02-06 11:15** [`071e535`] Fix wrong year (2024) in posts and duplicate hashtags (src/claude-v2.js)
+- **2026-02-06** [`269ba13`] Stricter text verification: reject posts <90% + retry clipboard
+- **2026-02-06** [`a718ad2`] Fix text truncation undetected + false-positive post success
+- **2026-02-06** [`64004d7`] Consolidate Telegram notifications into single summary
+- **2026-02-06** [`3abb11e`] Fix wrong year (2024) in posts and duplicate hashtags
 - **2026-02-06 09:49** [`dfbadff`] Add watchdog to detect and recover missed cron triggers (scripts/cron-daemon-v2.js)
 - `affdda7` Fix emoji rendering (for...of + clipboard)
 - `fb7070d` Fix daemon suspension (caffeinate + heartbeat + KeepAlive)
