@@ -96,7 +96,7 @@ let currentSchedule = []
 // ==================== WATCHDOG: ANTI-CRON-PERDIDO ====================
 
 const EXECUTIONS_FILE = path.join(process.cwd(), 'logs', '.cron-executions.json')
-const GRACE_WINDOW_MS = 30 * 60 * 1000 // 30 minutes
+const GRACE_WINDOW_MS = 60 * 60 * 1000 // 60 minutes
 const DAEMON_START_TIME = Date.now()
 
 // Track which hours the watchdog already auto-triggered today (prevent double-fire)
@@ -187,7 +187,12 @@ async function checkMissedCrons() {
 
   for (const scheduledHour of scheduledHours) {
     // Only check hours that should have already fired
-    if (currentHour <= scheduledHour) continue
+    // Also check current hour if >10 min past (allows same-hour miss detection)
+    if (currentHour < scheduledHour) continue
+    if (currentHour === scheduledHour) {
+      const currentMinute = parseInt(new Date().toLocaleString('en-US', { timeZone: TIMEZONE, minute: 'numeric' }))
+      if (currentMinute < 10) continue
+    }
 
     const hourKey = String(scheduledHour)
 

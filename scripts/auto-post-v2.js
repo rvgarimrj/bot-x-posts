@@ -137,6 +137,12 @@ async function postWithRetry(post, maxRetries = MAX_RETRIES) {
       return result
     }
 
+    // Don't retry if post was possibly sent (avoid duplicates on X)
+    if (result.possiblyPosted || result.duplicate) {
+      console.log('   ⚠️ Post pode ter sido enviado - pulando retry para evitar duplicata')
+      return { success: true, warning: 'possibly_posted' }
+    }
+
     if (attempt <= maxRetries) {
       console.log(`   ⚠️ Tentativa ${attempt} falhou, aguardando 10s para retry...`)
       await new Promise(r => setTimeout(r, 10000))

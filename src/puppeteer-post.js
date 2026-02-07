@@ -413,39 +413,56 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
       }, text)
 
       if (clipboardWorked) {
-        // Clica no campo para garantir foco
-        await textbox.click()
-        await new Promise(r => setTimeout(r, 200))
-        // Cola (Cmd+V no Mac)
-        await page.keyboard.down('Meta')
-        await page.keyboard.press('v')
-        await page.keyboard.up('Meta')
-        await new Promise(r => setTimeout(r, 1000))
+        try {
+          // Re-find textbox (DOM may have changed, stale reference causes "Node is detached")
+          textbox = await page.$('[data-testid="tweetTextarea_0"]') || textbox
+          await textbox.click()
+          await new Promise(r => setTimeout(r, 200))
+          // Cola (Cmd+V no Mac)
+          await page.keyboard.down('Meta')
+          await page.keyboard.press('v')
+          await page.keyboard.up('Meta')
+          await new Promise(r => setTimeout(r, 1000))
+        } catch (pasteErr) {
+          console.log(`   ⚠️ Erro ao colar: ${pasteErr.message}`)
+        }
       }
 
       // Verifica resultado
-      insertedText = await page.evaluate(() => {
-        const el = document.querySelector('[data-testid="tweetTextarea_0"]')
-        return el ? (el.innerText || el.textContent || '') : ''
-      })
+      try {
+        insertedText = await page.evaluate(() => {
+          const el = document.querySelector('[data-testid="tweetTextarea_0"]')
+          return el ? (el.innerText || el.textContent || '') : ''
+        })
+      } catch {
+        insertedText = ''
+      }
 
       console.log(`   Texto inserido: ${insertedText.length}/${text.length} chars`)
     }
 
     if (insertedText.length < text.length * 0.8) {
       // MÉTODO 3: keyboard.type (lento mas sempre funciona)
-      console.log(`   Texto inserido: ${insertedText.length}/${text.length} chars`)
       console.log('   ⚠️ Clipboard também falhou, usando digitação manual...')
 
-      // Limpa
-      await page.keyboard.down('Meta')
-      await page.keyboard.press('a')
-      await page.keyboard.up('Meta')
-      await page.keyboard.press('Backspace')
-      await new Promise(r => setTimeout(r, 500))
+      try {
+        // Re-find textbox (DOM may have changed during Method 2)
+        textbox = await page.$('[data-testid="tweetTextarea_0"]') || textbox
+        await textbox.click()
+        await new Promise(r => setTimeout(r, 300))
 
-      // Digita caractere por caractere
-      await typeHuman(page, text)
+        // Limpa
+        await page.keyboard.down('Meta')
+        await page.keyboard.press('a')
+        await page.keyboard.up('Meta')
+        await page.keyboard.press('Backspace')
+        await new Promise(r => setTimeout(r, 500))
+
+        // Digita caractere por caractere
+        await typeHuman(page, text)
+      } catch (typeErr) {
+        console.log(`   ⚠️ Digitação manual falhou: ${typeErr.message}`)
+      }
     }
 
     // Espera antes de postar (como se estivesse relendo) - 2-4 segundos
@@ -485,6 +502,8 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
         document.body.removeChild(temp)
       }, text)
 
+      // Re-find textbox (DOM may have changed)
+      try { textbox = await page.$('[data-testid="tweetTextarea_0"]') || textbox } catch {}
       await textbox.click()
       await new Promise(r => setTimeout(r, 300))
       await page.keyboard.down('Meta')
@@ -547,7 +566,22 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
     // Clica no botao Postar usando Puppeteer click (mais confiavel que evaluate)
     console.log('🚀 Clicando em Postar...')
     await postBtn.click()
-    await new Promise(r => setTimeout(r, 3000))
+    await new Promise(r => setTimeout(r, 5000))
+
+    // Verifica se há aviso de duplicado ("Opa! Você já disse isso")
+    const hasDuplicateWarning = await page.evaluate(() => {
+      const body = document.body.innerText || ''
+      return body.includes('Você já disse isso') || body.includes('You already said that') || body.includes('already sent')
+    }).catch(() => false)
+
+    if (hasDuplicateWarning) {
+      console.log('   ⚠️ Duplicado detectado - tweet já publicado anteriormente')
+      await page.keyboard.press('Escape')
+      await new Promise(r => setTimeout(r, 1000))
+      await page.keyboard.press('Escape')
+      await new Promise(r => setTimeout(r, 500))
+      return { success: false, error: 'Post duplicado', duplicate: true, possiblyPosted: true }
+    }
 
     // Verifica se modal fechou (indica sucesso)
     let modalClosed = !(await page.$('[data-testid="tweetTextarea_0"]'))
@@ -568,21 +602,38 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
           }, altBtn)
           if (!altDisabled) {
             await altBtn.click()
-            await new Promise(r => setTimeout(r, 3000))
+            await new Promise(r => setTimeout(r, 5000))
             break
           }
         }
       }
+
+      // Check duplicate again after second click attempt
+      const dupCheck2 = await page.evaluate(() => {
+        const body = document.body.innerText || ''
+        return body.includes('Você já disse isso') || body.includes('You already said that') || body.includes('already sent')
+      }).catch(() => false)
+
+      if (dupCheck2) {
+        console.log('   ⚠️ Duplicado detectado após retry de clique')
+        await page.keyboard.press('Escape')
+        await new Promise(r => setTimeout(r, 500))
+        await page.keyboard.press('Escape')
+        return { success: false, error: 'Post duplicado', duplicate: true, possiblyPosted: true }
+      }
+
       modalClosed = !(await page.$('[data-testid="tweetTextarea_0"]'))
     }
 
     if (modalClosed) {
       console.log('   ✅ Modal fechou - post enviado!')
     } else {
-      // Tenta fechar via Escape e reportar falha
+      // Modal não fechou - post PODE ter sido enviado
+      // Retorna possiblyPosted para evitar retry (que causaria duplicata)
+      console.log('   ⚠️ Modal não fechou após clicar Postar - possível post enviado')
       await page.keyboard.press('Escape')
       await new Promise(r => setTimeout(r, 1000))
-      throw new Error('Modal nao fechou apos clicar Postar - post pode nao ter sido enviado')
+      return { success: false, error: 'Modal nao fechou apos clicar Postar', possiblyPosted: true }
     }
 
     console.log('✅ Post publicado!')
