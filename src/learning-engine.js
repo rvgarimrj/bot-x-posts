@@ -511,11 +511,35 @@ export async function analyzePosts() {
   const learnings = loadLearnings()
   const postsLog = loadPostsLog()
 
-  // Fetch recent tweets with metrics
-  const tweets = await fetchTweetsWithMetrics(100)
+  // Fetch recent tweets with metrics from Twitter API
+  let tweets = await fetchTweetsWithMetrics(100)
+
+  // If Twitter API returned nothing, use locally logged posts
+  if (tweets.length === 0 && postsLog.posts && postsLog.posts.length > 0) {
+    console.log('   Twitter API returned no tweets, using locally logged posts...')
+    // Use posts from last 7 days
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    tweets = postsLog.posts
+      .filter(p => new Date(p.createdAt) >= sevenDaysAgo)
+      .map(p => ({
+        id: p.id,
+        text: p.text,
+        createdAt: p.createdAt,
+        metrics: p.metrics || { likes: 0, retweets: 0, replies: 0, impressions: 0, quotes: 0, bookmarks: 0 },
+        // Preserve pre-detected attributes from logging
+        _predetected: {
+          hook: p.hook,
+          style: p.style,
+          topic: p.topic,
+          language: p.language,
+          experiment: p.experiment,
+          hour: p.hour
+        }
+      }))
+  }
 
   if (tweets.length === 0) {
-    console.log('   No tweets found to analyze')
+    console.log('   No tweets found to analyze (neither API nor local log)')
     return { success: false, message: 'No tweets found' }
   }
 
@@ -545,13 +569,14 @@ export async function analyzePosts() {
     totalImpressions += impressions
     totalEngagement += engagement
 
-    // Detect attributes
-    const hook = detectHook(tweet.text)
-    const style = detectStyle(tweet.text)
-    const topic = detectTopic(tweet.text)
-    const language = detectLanguage(tweet.text)
-    const experiment = detectExperiment(tweet.text, language)
-    const hour = extractHour(tweet.createdAt)
+    // Use pre-detected attributes if available (from local log), otherwise detect from text
+    const pre = tweet._predetected || {}
+    const hook = (pre.hook && pre.hook !== 'unknown') ? pre.hook : detectHook(tweet.text)
+    const style = (pre.style && pre.style !== 'unknown') ? pre.style : detectStyle(tweet.text)
+    const topic = (pre.topic && pre.topic !== 'unknown') ? pre.topic : detectTopic(tweet.text)
+    const language = pre.language || detectLanguage(tweet.text)
+    const experiment = pre.experiment || detectExperiment(tweet.text, language)
+    const hour = pre.hour || extractHour(tweet.createdAt)
     const roundedHour = roundToPostingHour(hour)
 
     // Timezone-adjusted hours

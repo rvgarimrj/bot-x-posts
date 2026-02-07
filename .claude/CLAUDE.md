@@ -320,6 +320,7 @@ node scripts/test-video-meme.js [topic]      # Specify topic
 Verificacao final exige 90% do texto. Se < 90%, retry via clipboard. Se ainda falha, erro (trigger retry do post inteiro).
 
 ## Historico de Commits (Recentes)
+- **2026-02-07 20:35** [`832db06`] Reduce posting volume: 72 to 20 posts/day + 2 threads (.claude/CLAUDE.md,scripts/auto-post-v2.js,scripts/cron-daemon-v2.js)
 - **2026-02-07 20:35** [`edf3e16`] Add dismissOrphanModal: close stale compose modals before posting (src/puppeteer-post.js)
 - **2026-02-07 12:38** [`732d119`] Fix modal detection: check dialog overlay instead of textarea existence (src/puppeteer-post.js)
 - **2026-02-07 07:32** [`1b6f29a`] Fix posting failures: stale DOM refs, duplicate detection, watchdog timing (scripts/auto-post-v2.js,scripts/cron-daemon-v2.js,src/puppeteer-post.js)
