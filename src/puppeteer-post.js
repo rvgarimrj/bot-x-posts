@@ -70,6 +70,49 @@ async function isComposeModalOpen(page) {
 }
 
 /**
+ * Fecha modal de compose órfã que ficou aberta de tentativa anterior.
+ * Previne que o próximo post encontre a modal vazia/suja.
+ */
+async function dismissOrphanModal(page) {
+  try {
+    const modalOpen = await isComposeModalOpen(page)
+    if (modalOpen) {
+      console.log('   🧹 Modal órfã detectada - fechando...')
+      // Clear any text first
+      await page.keyboard.down('Meta')
+      await page.keyboard.press('KeyA')
+      await page.keyboard.up('Meta')
+      await page.keyboard.press('Backspace')
+      await new Promise(r => setTimeout(r, 300))
+      // Press Escape to close
+      await page.keyboard.press('Escape')
+      await new Promise(r => setTimeout(r, 1000))
+      // Check for discard dialog ("Discard" / "Descartar")
+      const discardBtn = await page.evaluate(() => {
+        const buttons = document.querySelectorAll('[role="button"]')
+        for (const btn of buttons) {
+          const text = btn.textContent?.toLowerCase() || ''
+          if (text.includes('discard') || text.includes('descartar')) {
+            btn.click()
+            return true
+          }
+        }
+        return false
+      })
+      if (discardBtn) {
+        console.log('   🧹 Descartou rascunho órfão')
+        await new Promise(r => setTimeout(r, 1000))
+      }
+      // Final Escape in case dialog is still there
+      await page.keyboard.press('Escape')
+      await new Promise(r => setTimeout(r, 500))
+    }
+  } catch (e) {
+    // Silently ignore - best effort cleanup
+  }
+}
+
+/**
  * Verifica se URL é problemática (search, compose, etc.)
  */
 function isProblematicUrl(url) {
@@ -287,6 +330,9 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
     }
 
     console.log('✅ Logado no X')
+
+    // Fecha modal órfã de tentativa anterior
+    await dismissOrphanModal(page)
 
     // Tenta clicar no botao de novo post primeiro (mais rapido)
     console.log('📝 Abrindo composer...')
@@ -834,6 +880,9 @@ export async function postThread(tweets, onProgress = null, firstTweetImage = nu
     console.log('✅ Logado no X')
 
     // ========== ABRE COMPOSER ==========
+
+    // Fecha modal órfã de tentativa anterior
+    await dismissOrphanModal(page)
 
     console.log('\n📝 Abrindo composer...')
     const postBtn = await page.$('[data-testid="SideNav_NewTweet_Button"]')
@@ -1420,6 +1469,9 @@ export async function postTweetWithImage(text, imagePath, keepBrowserOpen = true
     await page.waitForSelector('[data-testid="SideNav_NewTweet_Button"]', { timeout: 15000 })
     console.log('✅ Logado no X')
 
+    // Fecha modal órfã de tentativa anterior
+    await dismissOrphanModal(page)
+
     // Abre composer
     console.log('📝 Abrindo composer...')
     const postBtn = await page.$('[data-testid="SideNav_NewTweet_Button"]')
@@ -1511,6 +1563,9 @@ export async function postTweetWithVideo(text, videoPath, keepBrowserOpen = true
     console.log('⏳ Aguardando pagina carregar...')
     await page.waitForSelector('[data-testid="SideNav_NewTweet_Button"]', { timeout: 15000 })
     console.log('✅ Logado no X')
+
+    // Fecha modal órfã de tentativa anterior
+    await dismissOrphanModal(page)
 
     // Abre composer
     console.log('📝 Abrindo composer...')
@@ -1668,6 +1723,9 @@ export async function postQuoteTweet(commentary, tweetUrl, keepBrowserOpen = tru
     console.log('⏳ Aguardando pagina carregar...')
     await page.waitForSelector('[data-testid="SideNav_NewTweet_Button"]', { timeout: 15000 })
     console.log('✅ Logado no X')
+
+    // Fecha modal órfã de tentativa anterior
+    await dismissOrphanModal(page)
 
     // Abre composer
     console.log('📝 Abrindo composer...')
