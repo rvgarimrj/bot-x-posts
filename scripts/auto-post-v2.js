@@ -3,9 +3,12 @@
  *
  * Flow:
  * 1. Curate from multi-sources (curate-v3)
- * 2. Generate 8 posts (4 topics × 2 languages)
+ * 2. Generate 4 posts (4 topics × 1 language per cycle) or thread-only
  * 3. Preview on Telegram (2 min to cancel)
  * 4. Post sequentially (60s between posts)
+ *
+ * Schedule: 5 post cycles (8h EN, 12h PT, 16h EN, 20h PT, 22h EN) + 2 thread-only (10h, 18h)
+ * = 20 posts + 2 threads/day (~30 tweets/day)
  */
 
 import 'dotenv/config'
@@ -31,7 +34,11 @@ const MAX_RETRIES = 2
 const TOPICS = ['crypto', 'investing', 'ai', 'vibeCoding']
 const LANGUAGES = ['en', 'pt-BR']
 
-// Thread configuration
+// Language schedule: EN-heavy (3 EN + 2 PT-BR = 12 EN + 8 PT per day)
+const EN_HOURS = [8, 16, 22]   // English post cycles
+const PTBR_HOURS = [12, 20]    // Portuguese post cycles
+
+// Thread configuration (thread-only cycles, no regular posts)
 const THREAD_HOURS = [10, 18]  // Post threads at 10h and 18h only
 const THREAD_LANGUAGE = 'en'   // Threads in English reach more people
 const THREAD_WITH_IMAGE = true // Generate image for first tweet of thread
@@ -160,8 +167,13 @@ async function main() {
   console.log('='.repeat(60))
   console.log(`⏰ ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`)
   console.log(`📋 Topics: ${TOPICS.join(', ')}`)
-  console.log(`🌍 Languages: ${LANGUAGES.join(', ')}`)
-  console.log(`📈 Total: ${TOPICS.length * LANGUAGES.length} posts`)
+  if (THREAD_HOURS.includes(hour)) {
+    console.log(`🧵 Thread-only cycle (${hour}h)`)
+  } else {
+    const lang = EN_HOURS.includes(hour) ? 'en' : 'pt-BR'
+    console.log(`🌍 Language: ${lang === 'en' ? 'English' : 'Português'}`)
+    console.log(`📈 Total: ${TOPICS.length} posts`)
+  }
 
   // ==================== 1. CURATION ====================
 
@@ -189,35 +201,40 @@ async function main() {
 
   // ==================== 2. GENERATE POSTS ====================
 
-  console.log('\n2. Gerando posts (4 topics × 2 languages)...')
+  const isThreadOnly = THREAD_HOURS.includes(hour)
+  const cycleLanguage = EN_HOURS.includes(hour) ? 'en' : 'pt-BR'
   const posts = []
 
-  for (const topic of TOPICS) {
-    const data = content[topic]
-    if (!data) continue
+  if (isThreadOnly) {
+    console.log(`\n2. Horário de thread (${hour}h) - pulando posts regulares`)
+  } else {
+    const langLabel = cycleLanguage === 'en' ? 'EN' : 'PT-BR'
+    console.log(`\n2. Gerando 4 posts (${langLabel}) - 4 topics × 1 language...`)
 
-    for (const language of LANGUAGES) {
+    for (const topic of TOPICS) {
+      const data = content[topic]
+      if (!data) continue
+
       // Format context for this language
-      const fullContext = formatForPrompt(content, topic, language)
+      const fullContext = formatForPrompt(content, topic, cycleLanguage)
 
       // Choose best angle
-      let angle = language === 'en' ? 'Analysis based on data' : 'Análise baseada nos dados'
+      let angle = cycleLanguage === 'en' ? 'Analysis based on data' : 'Análise baseada nos dados'
       if (data.suggestedAngles && data.suggestedAngles.length > 0) {
         const a = data.suggestedAngles[0]
         angle = typeof a === 'string' ? a : `[${a.type}] ${a.hook} → ${a.insight}`
       }
 
-      const langLabel = language === 'en' ? 'EN' : 'PT'
       console.log(`   Gerando: ${topic} (${langLabel})...`)
 
       try {
-        const result = await generatePost(topic, fullContext, angle, language)
+        const result = await generatePost(topic, fullContext, angle, cycleLanguage)
         // Handle both object {text, _metadata} and plain string
         const postText = typeof result === 'string' ? result : result.text
         const metadata = result._metadata || {}
         posts.push({
           topic,
-          language,
+          language: cycleLanguage,
           post: postText,
           sentiment: data.sentiment,
           chars: postText.length,
@@ -229,23 +246,22 @@ async function main() {
         console.log(`   ⚠️ Erro em ${topic} (${langLabel}): ${err.message}`)
       }
     }
-  }
 
-  if (posts.length === 0) {
-    console.log('❌ Nenhum post gerado')
-    await notify('❌ Nenhum post foi gerado.')
-    process.exit(1)
-  }
+    if (posts.length === 0 && !isThreadOnly) {
+      console.log('❌ Nenhum post gerado')
+      await notify('❌ Nenhum post foi gerado.')
+      process.exit(1)
+    }
 
-  console.log(`   ✅ ${posts.length} posts gerados`)
+    console.log(`   ✅ ${posts.length} posts gerados`)
+  }
 
   // ==================== 2.5 GENERATE THREAD (only at specific hours) ====================
 
   let thread = null
   let threadImage = null
-  const isThreadHour = THREAD_HOURS.includes(hour)
 
-  if (isThreadHour) {
+  if (isThreadOnly) {
     console.log(`\n2.5. Gerando thread (horário ${hour}h é horário de thread)...`)
 
     try {
@@ -285,7 +301,13 @@ async function main() {
   let mediaMeme = null    // Reddit meme (video/image/gif)
   let quoteTarget = null  // Viral tweet to quote
 
-  console.log('\n2.7. Buscando conteudo de midia...')
+  // Only fetch media for EN cycles (media content is in English)
+  if (isThreadOnly) {
+    console.log('\n2.7. Pulando midia (horário de thread)')
+  } else if (cycleLanguage !== 'en') {
+    console.log('\n2.7. Pulando midia (ciclo PT-BR)')
+  } else {
+    console.log('\n2.7. Buscando conteudo de midia...')
 
   // 2.7a: Fetch Reddit media (1 meme)
   try {
@@ -424,13 +446,22 @@ async function main() {
       console.log(`   ✅ Post ${idx + 1} substituido por quote tweet (@${quoteTarget.authorHandle})`)
     }
   }
+  } // end media fetch (EN cycles only)
+
+  // If thread-only cycle and no thread generated, exit gracefully
+  if (isThreadOnly && (!thread || !thread.tweets || thread.tweets.length < 2) && posts.length === 0) {
+    console.log('⚠️ Thread-only cycle mas thread não gerada. Saindo.')
+    await notify(`⚠️ Ciclo ${hour}h (thread-only): thread não gerada.`)
+    process.exit(0)
+  }
 
   // ==================== 3. TELEGRAM PREVIEW ====================
 
   console.log('\n3. Enviando preview para Telegram...')
 
-  let previewMsg = `🎯 <b>Posts das ${hour}h</b> (V2 Multi-Source)\n\n`
-  previewMsg += `⏰ Serão publicados em 2 minutos\n`
+  const cycleType = isThreadOnly ? 'Thread' : `${posts.length} posts ${cycleLanguage === 'en' ? 'EN' : 'PT-BR'}`
+  let previewMsg = `🎯 <b>${hour}h - ${cycleType}</b>\n\n`
+  previewMsg += `⏰ Publicação em 2 minutos\n`
   previewMsg += `<i>Clique em Cancelar para não publicar</i>\n\n`
 
   // Group by topic for cleaner display

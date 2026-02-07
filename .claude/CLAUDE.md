@@ -18,19 +18,17 @@ Cron (8h-23h) -> Curate-V3 (multi-fonte paralelo, cache 30min/4h) -> Claude-V2 (
 
 ## Horarios e Topicos (TODOS OS DIAS)
 
-| Horario | Posts | Thread | Topicos | Idiomas |
-|---------|-------|--------|---------|---------|
-| 8h | 8 | - | crypto, investing, ai, vibeCoding | EN + PT-BR |
-| 10h | 8 | thread+img | crypto, investing, ai, vibeCoding | EN + PT-BR |
-| 12h | 8 | - | crypto, investing, ai, vibeCoding | EN + PT-BR |
-| 14h | 8 | - | crypto, investing, ai, vibeCoding | EN + PT-BR |
-| 16h | 8 | - | crypto, investing, ai, vibeCoding | EN + PT-BR |
-| 18h | 8 | thread+img | crypto, investing, ai, vibeCoding | EN + PT-BR |
-| 20h | 8 | - | crypto, investing, ai, vibeCoding | EN + PT-BR |
-| 22h | 8 | - | crypto, investing, ai, vibeCoding | EN + PT-BR |
-| 23h | 8 | - | crypto, investing, ai, vibeCoding | EN + PT-BR |
+| Horario | Posts | Thread | Topicos | Idioma |
+|---------|-------|--------|---------|--------|
+| 8h | 4 | - | crypto, investing, ai, vibeCoding | EN |
+| 10h | 0 | thread+img | auto (melhor sentimento) | EN |
+| 12h | 4 | - | crypto, investing, ai, vibeCoding | PT-BR |
+| 16h | 4 | - | crypto, investing, ai, vibeCoding | EN |
+| 18h | 0 | thread+img | auto (melhor sentimento) | EN |
+| 20h | 4 | - | crypto, investing, ai, vibeCoding | PT-BR |
+| 22h | 4 | - | crypto, investing, ai, vibeCoding | EN |
 
-**Total:** 72 posts + 2 threads com imagem/dia = 82 tweets/dia. Threads as 10h/18h em EN com imagem Gemini.
+**Total:** 20 posts + 2 threads com imagem/dia = ~30 tweets/dia. Threads as 10h/18h em EN com imagem Gemini. EN-heavy: 12 posts EN + 8 posts PT-BR.
 
 **Ciclos extras:** 00:01 Health Check | 23:59 Daily Learning
 
@@ -173,11 +171,15 @@ npm run learn|collect|health|restart|report|goals|learn:dry
 | Aba X nao encontrada | Codigo abre automaticamente |
 | Timeout tela bloqueada | Flags anti-suspensao Chrome + caffeinate |
 | Rate limit | Cache 15min + fallback |
-| Post truncado | Verificacao 90% + retry clipboard + erro se falhar |
+| Post truncado | Verificacao 90% + retry clipboard + typeHuman fallback |
 | `.catch()` em sync | Usar try/catch para unlinkSync |
 | Daemon suspenso (TN) | caffeinate -i + heartbeat + KeepAlive:true |
 | Ano errado nos posts (2024) | Prompt agora inclui `TODAY'S DATE` + regra anti-ano-passado |
 | Hashtags coladas/duplicadas | Regra no prompt: separar com espaco, sem duplicatas |
+| Node is detached (stale ref) | Re-find textbox com `page.$()` antes de cada fallback |
+| Modal nao fechou (falso-neg) | `isComposeModalOpen()` verifica `[role="dialog"]` em vez de textarea |
+| Post duplicado no X | Detecta "Voce ja disse isso" + flag `possiblyPosted` pula retry |
+| Cron perdido (watchdog lento) | Same-hour detection (10min) + grace window 60min |
 
 ## Fluxo de Postagem (V2)
 
@@ -295,11 +297,19 @@ node scripts/test-video-meme.js [topic]      # Specify topic
 
 ## Premissas e Licoes Aprendidas
 
-### Insercao de Texto no X
-- **Clipboard (Cmd+V)** = metodo principal, mais confiavel
-- `execCommand('insertText')` funciona para single insert (nao chunks)
-- `keyboard.type()` char por char = fallback lento
-- **Emojis:** usar `for...of` (code points), colar emojis via clipboard. Iteracao por indice quebra surrogate pairs.
+### Insercao de Texto no X (3 metodos em cascata)
+1. **`execCommand('insertText')`** = rapido, mas insere apenas 30-50% do texto (bug sistematico)
+2. **Clipboard via textarea oculto** = `execCommand('copy')` + Cmd+V. Tambem falha ~50% das vezes
+3. **`typeHuman()` char por char** = lento mas confiavel. SEMPRE funciona como ultimo fallback
+- **CRITICO:** Re-buscar textbox com `page.$()` antes de cada fallback. Cmd+A/Backspace causa React reconciliation que invalida referencias DOM ("Node is detached")
+- **Emojis:** usar `for...of` (code points), colar emojis via clipboard. Iteracao por indice quebra surrogate pairs
+
+### Deteccao de Sucesso ao Postar
+- **NAO usar** `page.$('[data-testid="tweetTextarea_0"]')` para detectar se modal fechou
+- O /home tem inline composer que SEMPRE tem `tweetTextarea_0`
+- **Usar** `isComposeModalOpen()` que verifica `[role="dialog"]` contendo textarea
+- Detecta aviso de duplicado ("Voce ja disse isso") e retorna `possiblyPosted: true`
+- `postWithRetry` pula retry quando `possiblyPosted` para evitar duplicatas no X
 
 ### Node.js
 - `fs.unlinkSync()` = sync, usar try/catch (NAO .catch())
@@ -310,6 +320,10 @@ node scripts/test-video-meme.js [topic]      # Specify topic
 Verificacao final exige 90% do texto. Se < 90%, retry via clipboard. Se ainda falha, erro (trigger retry do post inteiro).
 
 ## Historico de Commits (Recentes)
+- **2026-02-07 20:35** [`edf3e16`] Add dismissOrphanModal: close stale compose modals before posting (src/puppeteer-post.js)
+- **2026-02-07 12:38** [`732d119`] Fix modal detection: check dialog overlay instead of textarea existence (src/puppeteer-post.js)
+- **2026-02-07 07:32** [`1b6f29a`] Fix posting failures: stale DOM refs, duplicate detection, watchdog timing (scripts/auto-post-v2.js,scripts/cron-daemon-v2.js,src/puppeteer-post.js)
+- **2026-02-06 16:20** [`8fa3613`] Update documentation with media posts and posting fixes (.claude/CLAUDE.md)
 - **2026-02-06 16:19** [`d8192c9`] Fix posting failures: robust Post button click + text verification (src/puppeteer-post.js,src/sources/x-viral-search.js)
 - **2026-02-06 14:09** [`666cc2b`] Add Media Posts system: Reddit memes + X quote tweets (.claude/CLAUDE.md,scripts/auto-post-v2.js,scripts/test-video-meme.js,src/claude-v2.js,src/media-downloader.js)
 - **2026-02-06 12:24** [`cfbe48e`] Update documentation with today's fixes (.claude/CLAUDE.md)

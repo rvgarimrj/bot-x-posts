@@ -81,10 +81,10 @@ function startHeartbeat() {
 
 // ==================== DEFAULT SCHEDULE ====================
 
-// Every 2 hours from 8h to 22h + 23h (9 slots)
-// More posts = more data for learning engine
-// 8 posts per slot = 72 posts/day
-const DEFAULT_HOURS = [8, 10, 12, 14, 16, 18, 20, 22, 23]
+// 5 post cycles + 2 thread-only cycles = 20 posts + 2 threads/day
+// Post cycles: 8h, 12h, 16h, 20h, 22h (4 posts each = 20 posts)
+// Thread cycles: 10h, 18h (thread only, no regular posts)
+const DEFAULT_HOURS = [8, 10, 12, 16, 18, 20, 22]
 
 // Minimum posts analyzed to trust engagement data
 const MIN_POSTS_FOR_DYNAMIC_SCHEDULE = 30
@@ -524,7 +524,7 @@ console.log(`[SCHEDULE] Horarios: ${currentSchedule.map(s => s.hour + 'h').join(
 console.log(`[SCHEDULE] Razao: ${scheduleInfo.reason}`)
 console.log(`[TOPICS] Topics: ${TOPICS.join(', ')}`)
 console.log(`[LANGUAGES] Languages: ${LANGUAGES.join(', ')}`)
-console.log(`[POSTS] Total: ${currentSchedule.length * TOPICS.length * LANGUAGES.length} posts/dia`)
+console.log(`[POSTS] Total: ${(currentSchedule.length - 2) * TOPICS.length + ' + 2 threads'} posts/dia`)
 console.log(`[REPLY] Reply monitor: DESATIVADO`)
 console.log(`[HEALTH] Health check: 00:01`)
 console.log(`[LEARNING] Daily learning cycle: 23:59`)
@@ -773,7 +773,7 @@ process.stdin.on('data', async (input) => {
     })
     console.log(`   00:01: Health Check`)
     console.log(`   23:59: Daily Learning (analyze + adjust + report)`)
-    console.log(`[TOTAL] Total diario: ${currentSchedule.length * TOPICS.length * LANGUAGES.length} posts + health + learning`)
+    console.log(`[TOTAL] Total diario: ${(currentSchedule.length - 2) * TOPICS.length + ' + 2 threads'} posts + health + learning`)
   } else if (cmd === 'help' || cmd === '?') {
     console.log('Comandos:')
     console.log('  run (r)      - Executa ciclo de postagem')
@@ -802,7 +802,7 @@ sendNotification(
   `[SCHEDULE] Horarios: ${currentSchedule.map(s => s.hour + 'h').join(', ')} (${scheduleInfo.source})\n` +
   `[TOPICS] Topics: ${TOPICS.join(', ')}\n` +
   `[LANG] Languages: EN + PT-BR\n` +
-  `[POSTS] ${currentSchedule.length * TOPICS.length * LANGUAGES.length} posts/dia\n` +
+  `[POSTS] ${(currentSchedule.length - 2) * TOPICS.length + ' + 2 threads'} posts/dia\n` +
   `[HEALTH] Health check: 00:01\n` +
   `[LEARNING] Self-learning at 23:59\n` +
   `[WATCHDOG] Anti-cron-perdido: ativo\n` +
