@@ -47,6 +47,29 @@ const CONTEXT_ERRORS = [
 ]
 
 /**
+ * Verifica se o modal de compose está aberto (vs inline composer no /home)
+ * O /home sempre tem tweetTextarea_0 no inline composer do topo do feed,
+ * então checar apenas pela existência do textarea dá falso-positivo.
+ * O modal de compose fica dentro de [role="dialog"].
+ */
+async function isComposeModalOpen(page) {
+  return page.evaluate(() => {
+    // Check 1: Dialog containing textarea (compose modal overlay)
+    const dialogs = document.querySelectorAll('[role="dialog"]')
+    for (const dialog of dialogs) {
+      if (dialog.querySelector('[data-testid="tweetTextarea_0"]')) {
+        return true
+      }
+    }
+    // Check 2: URL-based (direct navigation to /compose/post)
+    if (window.location.pathname.includes('/compose/')) {
+      return true
+    }
+    return false
+  }).catch(() => false)
+}
+
+/**
  * Verifica se URL é problemática (search, compose, etc.)
  */
 function isProblematicUrl(url) {
@@ -584,15 +607,15 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
     }
 
     // Verifica se modal fechou (indica sucesso)
-    let modalClosed = !(await page.$('[data-testid="tweetTextarea_0"]'))
+    let modalClosed = !(await isComposeModalOpen(page))
     if (!modalClosed) {
-      // Tenta clicar novamente com seletores alternativos
+      // Tenta clicar novamente com seletores dentro do dialog (não inline composer)
       console.log('   Tentando novamente...')
       const altSelectors = [
+        '[role="dialog"] [data-testid="tweetButton"]',
+        '[role="dialog"] [data-testid="tweetButtonInline"]',
         '[data-testid="tweetButton"]',
-        '[data-testid="tweetButtonInline"]',
-        '[aria-label="Post"]',
-        '[aria-label="Postar"]'
+        '[data-testid="tweetButtonInline"]'
       ]
       for (const sel of altSelectors) {
         const altBtn = await page.$(sel)
@@ -622,7 +645,7 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
         return { success: false, error: 'Post duplicado', duplicate: true, possiblyPosted: true }
       }
 
-      modalClosed = !(await page.$('[data-testid="tweetTextarea_0"]'))
+      modalClosed = !(await isComposeModalOpen(page))
     }
 
     if (modalClosed) {
@@ -877,7 +900,7 @@ export async function postThread(tweets, onProgress = null, firstTweetImage = nu
     await new Promise(r => setTimeout(r, 3000))
 
     // Verifica se composer fechou (indica sucesso)
-    const composerStillOpen = await page.$('[data-testid="tweetTextarea_0"]')
+    const composerStillOpen = await isComposeModalOpen(page)
     if (composerStillOpen) {
       // Tenta clicar novamente
       console.log('   ⚠️ Composer ainda aberto, tentando novamente...')
@@ -1527,7 +1550,7 @@ export async function postTweetWithVideo(text, videoPath, keepBrowserOpen = true
     await new Promise(r => setTimeout(r, 5000))
 
     // Verify modal closed
-    const modalStillOpen = await page.$('[data-testid="tweetTextarea_0"]')
+    const modalStillOpen = await isComposeModalOpen(page)
     if (modalStillOpen) {
       // Try clicking post again
       console.log('   ⚠️ Modal ainda aberto, tentando novamente...')
@@ -1686,7 +1709,7 @@ export async function postQuoteTweet(commentary, tweetUrl, keepBrowserOpen = tru
     await new Promise(r => setTimeout(r, 3000))
 
     // Verify modal closed
-    const modalStillOpen = await page.$('[data-testid="tweetTextarea_0"]')
+    const modalStillOpen = await isComposeModalOpen(page)
     if (modalStillOpen) {
       console.log('   ⚠️ Modal ainda aberto, tentando novamente...')
       await clickPostAllButton(page)
