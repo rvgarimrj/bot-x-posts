@@ -261,6 +261,46 @@ async function findOrCreateXTab(browser, forceNew = false) {
 }
 
 /**
+ * Limpa o textbox do composer de forma robusta.
+ * Cmd+A → Backspace falha no contentEditable do X porque React reconciliation
+ * pode restaurar o conteúdo parcial. Essa função usa múltiplas abordagens.
+ */
+async function clearTextbox(page) {
+  // Abordagem 1: execCommand selectAll + delete (funciona em contentEditable)
+  await page.evaluate(() => {
+    const el = document.querySelector('[data-testid="tweetTextarea_0"]')
+    if (el) {
+      el.focus()
+      document.execCommand('selectAll')
+      document.execCommand('delete')
+    }
+  })
+  await new Promise(r => setTimeout(r, 300))
+
+  // Abordagem 2: Cmd+A → Backspace como fallback
+  await page.keyboard.down('Meta')
+  await page.keyboard.press('a')
+  await page.keyboard.up('Meta')
+  await page.keyboard.press('Backspace')
+  await new Promise(r => setTimeout(r, 300))
+
+  // Verifica se limpou
+  const remaining = await page.evaluate(() => {
+    const el = document.querySelector('[data-testid="tweetTextarea_0"]')
+    return el ? (el.innerText || '').trim().length : 0
+  })
+
+  if (remaining > 0) {
+    // Abordagem 3: força via selectAll + delete novamente
+    await page.evaluate(() => {
+      document.execCommand('selectAll')
+      document.execCommand('delete')
+    })
+    await new Promise(r => setTimeout(r, 300))
+  }
+}
+
+/**
  * Digita texto como humano (com delays variaveis)
  */
 async function typeHuman(page, text) {
@@ -416,12 +456,8 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
     await textbox.click()
     await new Promise(r => setTimeout(r, 500))
 
-    // Limpa qualquer texto existente (Ctrl+A, Delete)
-    await page.keyboard.down('Meta')  // Cmd no Mac
-    await page.keyboard.press('a')
-    await page.keyboard.up('Meta')
-    await page.keyboard.press('Backspace')
-    await new Promise(r => setTimeout(r, 500))
+    // Limpa qualquer texto existente
+    await clearTextbox(page)
 
     // ========== INSERÇÃO VIA execCommand (mais confiável) ==========
     // execCommand('insertText') funciona sem user gesture, ao contrário de navigator.clipboard
@@ -454,12 +490,8 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
       console.log(`   Texto inserido: ${insertedText.length}/${text.length} chars`)
       console.log('   ⚠️ execCommand incompleto, tentando clipboard via textarea...')
 
-      // Limpa o que foi inserido
-      await page.keyboard.down('Meta')
-      await page.keyboard.press('a')
-      await page.keyboard.up('Meta')
-      await page.keyboard.press('Backspace')
-      await new Promise(r => setTimeout(r, 500))
+      // Limpa o que foi inserido (robust clear)
+      await clearTextbox(page)
 
       // Usa textarea oculto para copiar (funciona sem user gesture)
       const clipboardWorked = await page.evaluate((textToInsert) => {
@@ -520,12 +552,8 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
         await textbox.click()
         await new Promise(r => setTimeout(r, 300))
 
-        // Limpa
-        await page.keyboard.down('Meta')
-        await page.keyboard.press('a')
-        await page.keyboard.up('Meta')
-        await page.keyboard.press('Backspace')
-        await new Promise(r => setTimeout(r, 500))
+        // Limpa (robust clear)
+        await clearTextbox(page)
 
         // Digita caractere por caractere
         await typeHuman(page, text)
@@ -1072,12 +1100,8 @@ async function insertTextInComposerField(page, text, fieldIndex) {
     await textbox.click()
     await new Promise(r => setTimeout(r, 300))
 
-    // Limpa qualquer texto existente
-    await page.keyboard.down('Meta')
-    await page.keyboard.press('a')
-    await page.keyboard.up('Meta')
-    await page.keyboard.press('Backspace')
-    await new Promise(r => setTimeout(r, 300))
+    // Limpa qualquer texto existente (robust clear)
+    await clearTextbox(page)
 
     // ========== MÉTODO 1: execCommand insertText (funciona com emojis) ==========
     const insertedViaExec = await page.evaluate((textToInsert) => {
@@ -1098,22 +1122,10 @@ async function insertTextInComposerField(page, text, fieldIndex) {
     // ========== MÉTODO 2: Clipboard via textarea (mais confiável) ==========
     console.log('   ⚠️ execCommand falhou, tentando clipboard via textarea...')
 
-    // Clear via Cmd+A + Backspace (React-safe, triggers proper events)
+    // Robust clear before retry
     await textbox.click()
     await new Promise(r => setTimeout(r, 200))
-    await page.keyboard.down('Meta')
-    await page.keyboard.press('a')
-    await page.keyboard.up('Meta')
-    await new Promise(r => setTimeout(r, 100))
-    await page.keyboard.press('Backspace')
-    await new Promise(r => setTimeout(r, 300))
-    // Second pass in case multi-paragraph didn't fully clear
-    await page.keyboard.down('Meta')
-    await page.keyboard.press('a')
-    await page.keyboard.up('Meta')
-    await new Promise(r => setTimeout(r, 100))
-    await page.keyboard.press('Backspace')
-    await new Promise(r => setTimeout(r, 300))
+    await clearTextbox(page)
 
     // Usa textarea oculto para copiar (funciona melhor que navigator.clipboard)
     const clipboardWorked = await page.evaluate((textToInsert) => {
@@ -1158,21 +1170,10 @@ async function insertTextInComposerField(page, text, fieldIndex) {
     // ========== MÉTODO 3: InputEvent (último recurso com emojis) ==========
     console.log('   ⚠️ Clipboard falhou, tentando InputEvent...')
 
-    // Clear via Cmd+A + Backspace (React-safe)
+    // Robust clear before retry
     await textbox.click()
     await new Promise(r => setTimeout(r, 200))
-    await page.keyboard.down('Meta')
-    await page.keyboard.press('a')
-    await page.keyboard.up('Meta')
-    await new Promise(r => setTimeout(r, 100))
-    await page.keyboard.press('Backspace')
-    await new Promise(r => setTimeout(r, 300))
-    await page.keyboard.down('Meta')
-    await page.keyboard.press('a')
-    await page.keyboard.up('Meta')
-    await new Promise(r => setTimeout(r, 100))
-    await page.keyboard.press('Backspace')
-    await new Promise(r => setTimeout(r, 300))
+    await clearTextbox(page)
 
     const insertedViaInput = await page.evaluate((textToInsert, idx) => {
       const el = document.querySelector(`[data-testid="tweetTextarea_${idx}"]`)
