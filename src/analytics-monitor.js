@@ -14,6 +14,7 @@ import puppeteer from 'puppeteer-core'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import 'dotenv/config'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -142,153 +143,155 @@ function parseMetricValue(text) {
 }
 
 /**
- * Extrai metricas da pagina de analytics do X
+ * Extrai metricas da pagina de analytics via Screenshot + Gemini Vision API
+ * Mais confiavel que DOM scraping pois le os numeros visuais da pagina
  */
-async function extractMetrics(page) {
-  console.log('   Extraindo metricas da pagina...')
+async function extractMetricsViaVision(page) {
+  const GEMINI_API_KEY = process.env.GOOGLE_GEMINI_API_KEY
 
-  // Aguarda pagina carregar completamente
-  await new Promise(r => setTimeout(r, 5000))
+  if (!GEMINI_API_KEY) {
+    console.log('   GOOGLE_GEMINI_API_KEY nao configurada, pulando Vision')
+    return null
+  }
 
-  const metrics = await page.evaluate(() => {
-    const result = {
-      impressions: 0,
-      engagements: 0,
-      newFollowers: 0,
-      profileVisits: 0,
-      mentions: 0,
-      linkClicks: 0,
-      retweets: 0,
-      likes: 0,
-      replies: 0,
-      rawData: {}
+  const screenshotPath = '/tmp/bot-x-analytics-screenshot.png'
+
+  try {
+    // Scroll to top to ensure summary cards are visible
+    await page.evaluate(() => window.scrollTo(0, 0))
+    await new Promise(r => setTimeout(r, 2000))
+
+    // Take screenshot of visible area
+    await page.screenshot({ path: screenshotPath, fullPage: false })
+    console.log('   Screenshot capturado')
+
+    // Read as base64
+    const imageBuffer = fs.readFileSync(screenshotPath)
+    const base64Image = imageBuffer.toString('base64')
+
+    const FLASH_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent'
+
+    const response = await fetch(`${FLASH_URL}?key=${GEMINI_API_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            {
+              inlineData: {
+                mimeType: 'image/png',
+                data: base64Image
+              }
+            },
+            {
+              text: `This is a screenshot of the X (Twitter) Analytics page.
+Extract the SUMMARY METRICS shown as the main KPI numbers at the top of the page.
+
+IMPORTANT:
+- Look for the large summary numbers displayed prominently (e.g., "198K" impressions, "1.9K" engagements)
+- Do NOT use chart Y-axis labels (e.g., "20K", "40K", "60K", "80K" going up the left side of a chart)
+- Do NOT use navigation numbers or sidebar counts
+- The page may be in English or Portuguese
+
+Return ONLY a JSON object with these fields (use 0 if a metric is not visible):
+{"impressions": <number>, "engagements": <number>, "newFollowers": <number>, "profileVisits": <number>}
+
+Convert suffixed numbers to full integers: "198K" = 198000, "1.9K" = 1900, "3M" = 3000000.
+Return ONLY the JSON, no markdown, no explanations.`
+            }
+          ]
+        }]
+      })
+    })
+
+    if (!response.ok) {
+      console.log(`   Gemini Vision API error: ${response.status}`)
+      try { fs.unlinkSync(screenshotPath) } catch(e) {}
+      return null
     }
 
-    // Helper: extrai numero de string (suporta K, M, B, virgulas, pontos)
+    const data = await response.json()
+    const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text || ''
+
+    console.log(`   Gemini Vision raw: ${responseText.substring(0, 200)}`)
+
+    // Parse JSON - handle markdown code blocks
+    let jsonStr = responseText.trim()
+    if (jsonStr.startsWith('```')) {
+      jsonStr = jsonStr.replace(/```json?\n?/g, '').replace(/```/g, '').trim()
+    }
+
+    const parsed = JSON.parse(jsonStr)
+
+    // Validate: impressions should be a positive number
+    if (typeof parsed.impressions !== 'number' || parsed.impressions < 0) {
+      console.log('   Vision returned invalid data, skipping')
+      try { fs.unlinkSync(screenshotPath) } catch(e) {}
+      return null
+    }
+
+    console.log(`   Metricas via Vision:`)
+    console.log(`      Impressions:    ${(parsed.impressions || 0).toLocaleString()}`)
+    console.log(`      Engagements:    ${(parsed.engagements || 0).toLocaleString()}`)
+    console.log(`      New Followers:  ${(parsed.newFollowers || 0).toLocaleString()}`)
+    console.log(`      Profile Visits: ${(parsed.profileVisits || 0).toLocaleString()}`)
+
+    try { fs.unlinkSync(screenshotPath) } catch(e) {}
+
+    return {
+      impressions: parsed.impressions || 0,
+      engagements: parsed.engagements || 0,
+      newFollowers: parsed.newFollowers || 0,
+      profileVisits: parsed.profileVisits || 0,
+      source: 'gemini-vision'
+    }
+
+  } catch (err) {
+    console.log(`   Vision error: ${err.message}`)
+    try { fs.unlinkSync(screenshotPath) } catch(e) {}
+    return null
+  }
+}
+
+/**
+ * Extrai metricas via DOM scraping (fallback quando Vision nao disponivel)
+ */
+async function extractMetricsDOMFallback(page) {
+  console.log('   [DOM fallback] Extraindo metricas via DOM scraping...')
+
+  await new Promise(r => setTimeout(r, 3000))
+
+  const metrics = await page.evaluate(() => {
+    const result = { rawData: {} }
+
     const extractNumber = (text) => {
       if (!text) return null
       const cleaned = text.trim().toUpperCase()
-      if (cleaned.endsWith('K')) {
-        return Math.round(parseFloat(cleaned.replace(/[^0-9.]/g, '')) * 1000)
-      }
-      if (cleaned.endsWith('M')) {
-        return Math.round(parseFloat(cleaned.replace(/[^0-9.]/g, '')) * 1_000_000)
-      }
-      if (cleaned.endsWith('B')) {
-        return Math.round(parseFloat(cleaned.replace(/[^0-9.]/g, '')) * 1_000_000_000)
-      }
+      if (cleaned.endsWith('K')) return Math.round(parseFloat(cleaned.replace(/[^0-9.]/g, '')) * 1000)
+      if (cleaned.endsWith('M')) return Math.round(parseFloat(cleaned.replace(/[^0-9.]/g, '')) * 1_000_000)
+      if (cleaned.endsWith('B')) return Math.round(parseFloat(cleaned.replace(/[^0-9.]/g, '')) * 1_000_000_000)
       const numStr = cleaned.replace(/[,\.]/g, '').replace(/[^0-9]/g, '')
       return parseInt(numStr, 10) || null
     }
 
-    // Helper: encontra metrica por label (mais robusto)
-    const findMetricNearLabel = (labels) => {
-      for (const label of labels) {
-        // Procura em todos os elementos de texto
-        const walker = document.createTreeWalker(
-          document.body,
-          NodeFilter.SHOW_TEXT,
-          null,
-          false
-        )
-        let node
-        while (node = walker.nextNode()) {
-          if (node.textContent.toLowerCase().includes(label.toLowerCase())) {
-            // Procura numero no elemento pai, avos, ou irmaos
-            let current = node.parentElement
-            for (let depth = 0; depth < 4 && current; depth++) {
-              // Procura numeros no container
-              const allText = current.innerText || ''
-              const lines = allText.split('\n').map(l => l.trim()).filter(Boolean)
-              for (const line of lines) {
-                if (/^[\d,\.]+[KMB]?$/i.test(line)) {
-                  const num = extractNumber(line)
-                  if (num !== null && num > 0) {
-                    return line
-                  }
-                }
-              }
-              current = current.parentElement
-            }
-          }
-        }
-      }
-      return null
-    }
-
-    // Abordagem 1: Busca estruturada por cards/metricas
-    const cards = document.querySelectorAll('[data-testid], [role="group"], section, article')
-    cards.forEach(card => {
-      const text = card.innerText || ''
-      const textLower = text.toLowerCase()
-
-      // Procura numeros no card
-      const numbers = text.match(/[\d,\.]+[KMB]?/gi) || []
-
-      if (textLower.includes('impression') || textLower.includes('impresso') || textLower.includes('visualiza')) {
-        const num = numbers.find(n => extractNumber(n) > 100) // Impressions geralmente > 100
-        if (num) result.rawData.impressions = num
-      }
-
-      if (textLower.includes('engagement') || textLower.includes('engajament') || textLower.includes('interac')) {
-        const num = numbers.find(n => extractNumber(n) > 0)
-        if (num && !result.rawData.engagements) result.rawData.engagements = num
-      }
-
-      if ((textLower.includes('follower') || textLower.includes('seguidor')) && !textLower.includes('following')) {
-        const num = numbers.find(n => extractNumber(n) > 0)
-        if (num && !result.rawData.newFollowers) result.rawData.newFollowers = num
-      }
-
-      if (textLower.includes('profile visit') || textLower.includes('visita ao perfil') || textLower.includes('visita')) {
-        const num = numbers.find(n => extractNumber(n) > 0)
-        if (num && !result.rawData.profileVisits) result.rawData.profileVisits = num
-      }
-    })
-
-    // Abordagem 2: Busca por labels comuns
-    if (!result.rawData.impressions) {
-      result.rawData.impressions = findMetricNearLabel(['impressions', 'impressoes', 'impressões', 'views', 'visualizacoes'])
-    }
-    if (!result.rawData.engagements) {
-      result.rawData.engagements = findMetricNearLabel(['engagements', 'engajamentos', 'interactions', 'interacoes'])
-    }
-    if (!result.rawData.newFollowers) {
-      result.rawData.newFollowers = findMetricNearLabel(['new followers', 'novos seguidores', 'followers', 'seguidores'])
-    }
-    if (!result.rawData.profileVisits) {
-      result.rawData.profileVisits = findMetricNearLabel(['profile visits', 'visitas ao perfil', 'visitas'])
-    }
-
-    // Abordagem 3: Busca todos os numeros grandes (heuristica para impressions)
+    // Collect all visible numbers from the page
     const allText = document.body.innerText
     const bigNumbers = allText.match(/[\d,\.]+[KMB]|[\d]{4,}/gi) || []
-    result.rawData.allNumbers = bigNumbers.slice(0, 10)
-
-    // Se ainda nao temos impressions, pega o maior numero da pagina
-    if (!result.rawData.impressions && bigNumbers.length > 0) {
-      const sorted = bigNumbers
-        .map(n => ({ raw: n, val: extractNumber(n) }))
-        .filter(n => n.val !== null && n.val > 100)
-        .sort((a, b) => b.val - a.val)
-      if (sorted.length > 0) {
-        result.rawData.impressions = sorted[0].raw
-      }
-    }
+    result.rawData.allNumbers = bigNumbers.slice(0, 15)
 
     return result
   })
 
-  // Processa os valores extraidos
-  const processed = {
-    impressions: parseMetricValue(metrics.rawData.impressions) || 0,
-    engagements: parseMetricValue(metrics.rawData.engagements) || 0,
-    newFollowers: parseMetricValue(metrics.rawData.newFollowers) || 0,
-    profileVisits: parseMetricValue(metrics.rawData.profileVisits) || 0,
-    rawData: metrics.rawData
+  // Return raw numbers for logging - values are unreliable
+  return {
+    impressions: 0,
+    engagements: 0,
+    newFollowers: 0,
+    profileVisits: 0,
+    source: 'dom-fallback',
+    rawData: metrics.rawData,
+    unreliable: true
   }
-
-  return processed
 }
 
 /**
@@ -407,7 +410,7 @@ function generateReport(entry, comparison, projection) {
    ANALYTICS REPORT - ${date} ${time}
 =====================================
 
-METRICAS DO DIA:
+METRICAS DO DIA (fonte: ${metrics.source || 'unknown'}):
   Impressoes:     ${safeLocale(metrics.impressions)}
   Engajamentos:   ${safeLocale(metrics.engagements)}
   Novos seguid.:  ${safeLocale(metrics.newFollowers)}
@@ -495,24 +498,21 @@ export async function collectDailyAnalytics() {
       throw new Error('Nao esta logado no X. Faca login no Chrome primeiro.')
     }
 
-    // Extrai metricas
+    // Extrai metricas - Vision API primeiro, DOM fallback
     console.log('\n3. Extraindo metricas...')
-    const metrics = await extractMetrics(page)
 
-    // Staleness detection: check if values are identical to previous entries
-    const prevEntries = history.entries.slice(-3)
-    const isStale = prevEntries.length >= 2 && prevEntries.every(prev =>
-      prev.metrics.impressions === metrics.impressions &&
-      prev.metrics.engagements === metrics.engagements &&
-      prev.metrics.newFollowers === metrics.newFollowers &&
-      prev.metrics.profileVisits === metrics.profileVisits
-    )
+    // Primary: Gemini Vision (screenshot-based, resistant to DOM changes)
+    console.log('   Tentando Gemini Vision (screenshot)...')
+    let metrics = await extractMetricsViaVision(page)
 
-    if (isStale) {
-      console.log('   WARNING: Analytics values unchanged for 3+ days - data likely stale/unreliable')
-      console.log('   The X Analytics page DOM may have changed. Values may be chart labels, not actual metrics.')
+    if (metrics) {
+      console.log(`   Fonte: ${metrics.source}`)
+    } else {
+      // Fallback: DOM scraping (unreliable but better than nothing)
+      console.log('   Vision falhou, usando DOM fallback (valores podem ser imprecisos)...')
+      metrics = await extractMetricsDOMFallback(page)
       metrics.stale = true
-      metrics.staleWarning = 'Values unchanged for multiple days - scraper may be reading wrong elements'
+      metrics.staleWarning = 'Using DOM fallback - values may be chart axis labels, not actual metrics'
     }
 
     // Cria entrada do dia (use BRT timezone, not UTC)

@@ -1,0 +1,57 @@
+{
+  "entries": [
+    {
+      "date": "2026-02-08",
+      "timestamp": "2026-02-08T22:14:39.769Z",
+      "metrics": {
+        "impressions": 201200,
+        "engagements": 2000,
+        "newFollowers": 162,
+        "profileVisits": 551,
+        "source": "gemini-vision"
+      },
+      "comparison": {
+        "impressions": {
+          "change": 0,
+          "percent": 0
+        },
+        "engagements": {
+          "change": 0,
+          "percent": 0
+        },
+        "newFollowers": {
+          "change": 0,
+          "percent": 0
+        },
+        "profileVisits": {
+          "change": 0,
+          "percent": 0
+        }
+      },
+      "projection": {
+        "dailyAverage": 0,
+        "daysToGoal": null,
+        "projectedDate": null,
+        "onTrack": false,
+        "totalImpressions": 201200,
+        "percentComplete": 0
+      }
+    }
+  ],
+  "startDate": "2026-02-08",
+  "goals": {
+    "impressions": {
+      "target": 5000000,
+      "timeframeDays": 90,
+      "dailyTarget": 55556
+    },
+    "premiumFollowers": {
+      "target": 500,
+      "timeframeDays": 90
+    },
+    "verifiedFollowers": {
+      "target": 2000,
+      "timeframeDays": 90
+    }
+  }
+}

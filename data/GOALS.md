@@ -66,7 +66,7 @@ Para atingir as metas em 90 dias:
 | 02-05 | 0 | 0 | 0 | 24 | Updated |
 | 02-06 | | | | | |
 | 02-07 | 0 | 0 | 0 | 56 | Updated |
-| 02-08 | | | | | |
+| 02-08 | 201,200 | - | 162 | ~20 | Vision fix: real metrics |
 | 02-09 | | | | | |
 
 **Totais Semana 1:**

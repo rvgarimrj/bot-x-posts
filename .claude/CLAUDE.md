@@ -180,6 +180,8 @@ npm run learn|collect|health|restart|report|goals|learn:dry
 | Modal nao fechou (falso-neg) | `isComposeModalOpen()` verifica `[role="dialog"]` em vez de textarea |
 | Post duplicado no X | Detecta "Voce ja disse isso" + flag `possiblyPosted` pula retry |
 | Cron perdido (watchdog lento) | Same-hour detection (10min) + grace window 60min |
+| Analytics lendo eixo do grafico | Screenshot + Gemini Vision API (substituiu DOM scraping) |
+| Hashtag colada (#Tag1#Tag2) | `clearTextbox()` com `execCommand('selectAll'+'delete')` |
 
 ## Fluxo de Postagem (V2)
 
@@ -320,6 +322,9 @@ node scripts/test-video-meme.js [topic]      # Specify topic
 Verificacao final exige 90% do texto. Se < 90%, retry via clipboard. Se ainda falha, erro (trigger retry do post inteiro).
 
 ## Historico de Commits (Recentes)
+- **2026-02-08 16:32** [`6622841`] Fix hashtag concatenation: robust textbox clear between insertion methods (src/puppeteer-post.js)
+- **2026-02-08 12:30** [`2bab48e`] Fix learning engine, schedule, and analytics: prevent noise-based adjustments (data/GOALS.md,data/learnings.json,scripts/cron-daemon-v2.js,scripts/daily-learning.js,src/analytics-monitor.js)
+- **2026-02-07 20:36** [`cc0ffff`] Update learning engine fallback + goals tracking (.claude/CLAUDE.md,data/GOALS.md,src/learning-engine.js)
 - **2026-02-07 20:35** [`832db06`] Reduce posting volume: 72 to 20 posts/day + 2 threads (.claude/CLAUDE.md,scripts/auto-post-v2.js,scripts/cron-daemon-v2.js)
 - **2026-02-07 20:35** [`edf3e16`] Add dismissOrphanModal: close stale compose modals before posting (src/puppeteer-post.js)
 - **2026-02-07 12:38** [`732d119`] Fix modal detection: check dialog overlay instead of textarea existence (src/puppeteer-post.js)
