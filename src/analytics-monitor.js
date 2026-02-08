@@ -22,6 +22,14 @@ const __dirname = path.dirname(__filename)
 const ANALYTICS_URL = 'https://x.com/i/account_analytics'
 const DATA_DIR = path.join(__dirname, '..', 'data')
 const HISTORY_FILE = path.join(DATA_DIR, 'analytics-history.json')
+const TIMEZONE = 'America/Sao_Paulo'
+
+/**
+ * Get today's date string in BRT timezone (YYYY-MM-DD)
+ */
+function getTodayBRT() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: TIMEZONE })
+}
 
 // Metas de crescimento
 const GOALS = {
@@ -440,7 +448,7 @@ export async function collectDailyAnalytics() {
     // Carrega historico existente
     const history = loadHistory()
     if (!history.startDate) {
-      history.startDate = new Date().toISOString().split('T')[0]
+      history.startDate = getTodayBRT()
     }
 
     // Conecta ao Chrome
@@ -491,8 +499,24 @@ export async function collectDailyAnalytics() {
     console.log('\n3. Extraindo metricas...')
     const metrics = await extractMetrics(page)
 
-    // Cria entrada do dia
-    const today = new Date().toISOString().split('T')[0]
+    // Staleness detection: check if values are identical to previous entries
+    const prevEntries = history.entries.slice(-3)
+    const isStale = prevEntries.length >= 2 && prevEntries.every(prev =>
+      prev.metrics.impressions === metrics.impressions &&
+      prev.metrics.engagements === metrics.engagements &&
+      prev.metrics.newFollowers === metrics.newFollowers &&
+      prev.metrics.profileVisits === metrics.profileVisits
+    )
+
+    if (isStale) {
+      console.log('   WARNING: Analytics values unchanged for 3+ days - data likely stale/unreliable')
+      console.log('   The X Analytics page DOM may have changed. Values may be chart labels, not actual metrics.')
+      metrics.stale = true
+      metrics.staleWarning = 'Values unchanged for multiple days - scraper may be reading wrong elements'
+    }
+
+    // Cria entrada do dia (use BRT timezone, not UTC)
+    const today = getTodayBRT()
     const entry = {
       date: today,
       timestamp: new Date().toISOString(),

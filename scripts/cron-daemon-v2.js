@@ -1,15 +1,15 @@
 /**
  * Cron Daemon V2 - Multi-Source Bilingual Bot
  *
- * Schedule: Every 2h from 8h to 23h (9 slots)
- * Posts: 8 per slot (4 topics x 2 languages) = 72 posts/day
+ * Schedule: 7 slots (8h, 10h, 12h, 16h, 18h, 20h, 22h)
+ * Posts: 4 per slot (4 topics) + threads at 10h/18h = ~20 posts + 2 threads/day
  * Days: Every day (0-6)
  *
  * Features:
- * - High volume posting for faster learning
+ * - Dynamic schedule (only when real engagement data exists)
  * - Health check at 00:01
  * - Learning cycle at 23:59
- * - Dynamic schedule adjustment based on engagement
+ * - Watchdog anti-cron-perdido
  */
 
 import 'dotenv/config'
@@ -320,6 +320,17 @@ function getRecommendedSchedule() {
 
     // Get hour scores from learnings
     const hourScores = learnings.scores?.hours || {}
+
+    // Check if we have REAL engagement data (not all zeros)
+    const hasRealEngagement = Object.values(hourScores).some(d => d.avgEngagement > 0 || d.avgImpressions > 0)
+    if (!hasRealEngagement) {
+      console.log(`[SCHEDULE] Sem dados reais de engagement (tudo zero). Usando horarios default.`)
+      return {
+        hours: DEFAULT_HOURS,
+        source: 'default',
+        reason: `Sem engagement real: todos os scores baseados em zero dados`
+      }
+    }
 
     // Filter hours with enough data and sort by score
     const scoredHours = Object.entries(hourScores)

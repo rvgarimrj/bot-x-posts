@@ -110,8 +110,8 @@ function loadPostsLog() {
 }
 
 function loadPreviousDayReport() {
-  const yesterday = new Date()
-  yesterday.setDate(yesterday.getDate() - 1)
+  // Use BRT date for consistency with report naming
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000)
   const yesterdayFile = path.join(LOGS_DIR, `${formatDate(yesterday)}.json`)
 
   try {
@@ -163,14 +163,14 @@ async function analyzeTodaysPosts() {
   console.log(`   Analyzed ${analysisResult.tweetsAnalyzed} tweets`)
 
   // Load posts log to get today's posts specifically
+  // Use BRT date string comparison to avoid UTC/BRT timezone mismatch
   const postsLog = loadPostsLog()
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
+  const todayBRT = formatDate() // YYYY-MM-DD in BRT
 
   const todaysPosts = postsLog.posts.filter(p => {
-    const postDate = new Date(p.createdAt)
-    postDate.setHours(0, 0, 0, 0)
-    return postDate.getTime() === today.getTime()
+    // Convert post's UTC timestamp to BRT date
+    const postDateBRT = new Date(p.createdAt).toLocaleDateString('en-CA', { timeZone: TIMEZONE })
+    return postDateBRT === todayBRT
   })
 
   // Get top 3 posts by engagement
@@ -585,6 +585,10 @@ function formatTelegramReport(report) {
   msg += `<b>📱 X ANALYTICS:</b>\n`
   if (report.analyticsData?.entry?.metrics) {
     const m = report.analyticsData.entry.metrics
+    if (m.stale) {
+      msg += `  ⚠️ DATA STALE - scraper reading wrong elements\n`
+      msg += `  (Values unchanged for multiple days)\n`
+    }
     msg += `  👁 Impressions: ${safeNumber(m.impressions)}\n`
     msg += `  💬 Engagements: ${safeNumber(m.engagements)}\n`
     msg += `  👥 New Followers: ${safeNumber(m.newFollowers)}\n`

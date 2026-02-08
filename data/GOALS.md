@@ -2,7 +2,7 @@
 
 **Inicio:** 2026-02-03
 **Deadline:** 2026-05-04 (90 dias)
-**Dias Restantes:** 86
+**Dias Restantes:** 84
 
 ---
 
@@ -40,6 +40,7 @@ Para atingir as metas em 90 dias:
 
 | Metrica | Meta Total | Meta Diaria | Meta Semanal |
 |---------|------------|-------------|--------------|
+| 2026-02-07 | Daily learning report updated automatically |
 | 2026-02-05 | Daily learning report updated automatically |
 | 2026-02-04 | Daily learning report updated automatically |
 | Impressoes | 5,000,000 | ~55,556 | ~388,889 |
@@ -48,9 +49,9 @@ Para atingir as metas em 90 dias:
 
 ### Calculo de Posts
 
-- **Posts por dia:** 56 (8 posts x 7 horarios)
-- **Posts por semana:** 392
-- **Impressoes necessarias por post:** ~992 (para atingir 55,556/dia)
+- **Posts por dia:** ~20 (4 posts x 5 horarios) + 2 threads
+- **Posts por semana:** ~154
+- **Impressoes necessarias por post:** ~2,778 (para atingir 55,556/dia)
 
 ---
 
@@ -64,7 +65,7 @@ Para atingir as metas em 90 dias:
 | 02-04 | 0 | 0 | 0 | 0 | Updated |
 | 02-05 | 0 | 0 | 0 | 24 | Updated |
 | 02-06 | | | | | |
-| 02-07 | | | | | |
+| 02-07 | 0 | 0 | 0 | 56 | Updated |
 | 02-08 | | | | | |
 | 02-09 | | | | | |
 
@@ -188,25 +189,25 @@ Para atingir as metas em 90 dias:
 ## Calculadora de Progresso
 
 ```
-Dias passados: 4
-Dias restantes: 86
+Dias passados: 6
+Dias restantes: 84
 
 Impressoes:
-- Meta acumulada: 222.2K
+- Meta acumulada: 333.3K
 - Atual: 0
-- Diferenca: -222,224
+- Diferenca: -333,336
 - On track: NAO
 
 Premium Followers:
-- Meta acumulada: 24
+- Meta acumulada: 36
 - Atual: 0
-- Diferenca: -24
+- Diferenca: -36
 - On track: -
 
 Verified Followers:
-- Meta acumulada: 92
+- Meta acumulada: 138
 - Atual: 0
-- Diferenca: -92
+- Diferenca: -138
 - On track: -
 ```
 

@@ -1196,6 +1196,34 @@ export function adjustWeights() {
   const learnings = loadLearnings()
   const recommendations = []
 
+  // Check if we have ANY real engagement data before adjusting
+  // Without real metrics, weight adjustments are based on floating-point noise
+  const allCategories = ['hooks', 'styles', 'topics', 'hours', 'languages', 'experiments']
+  const hasRealEngagement = allCategories.some(cat => {
+    const scores = learnings.scores[cat]
+    if (!scores) return false
+    return Object.values(scores).some(d => d.avgEngagement > 0 || d.avgImpressions > 0)
+  })
+
+  if (!hasRealEngagement) {
+    console.log('   No real engagement data yet. Keeping all weights at 1.0 (neutral).')
+    // Reset all weights to 1.0 to prevent noise-based adjustments
+    for (const category of allCategories) {
+      if (learnings.weights[category]) {
+        for (const key of Object.keys(learnings.weights[category])) {
+          learnings.weights[category][key] = 1.0
+        }
+      }
+    }
+    learnings.recommendations = ['No engagement data available - weights kept at 1.0 (neutral)']
+    saveLearnings(learnings)
+    return {
+      success: true,
+      weights: learnings.weights,
+      recommendations: learnings.recommendations
+    }
+  }
+
   // Normalize scores to weights (1.0 = average, >1 = better, <1 = worse)
   // Use softmax-like approach to avoid extreme weights
 
@@ -1210,7 +1238,16 @@ export function adjustWeights() {
     // Calculate mean and std
     const scoreValues = scores.map(([_, data]) => data.score)
     const mean = scoreValues.reduce((a, b) => a + b, 0) / scoreValues.length
-    const std = Math.sqrt(scoreValues.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / scoreValues.length) || 1
+    const std = Math.sqrt(scoreValues.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / scoreValues.length)
+
+    // If std is too small (< 1), all scores are essentially equal - keep neutral weights
+    if (std < 1) {
+      console.log(`   ${categoryName}: scores too similar (std=${std.toFixed(3)}), keeping weights at 1.0`)
+      for (const key of Object.keys(learnings.weights[categoryName])) {
+        learnings.weights[categoryName][key] = 1.0
+      }
+      return
+    }
 
     // Convert to weights using z-score
     for (const [key, data] of scores) {
