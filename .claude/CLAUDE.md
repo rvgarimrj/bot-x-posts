@@ -322,6 +322,8 @@ node scripts/test-video-meme.js [topic]      # Specify topic
 Verificacao final exige 90% do texto. Se < 90%, retry via clipboard. Se ainda falha, erro (trigger retry do post inteiro).
 
 ## Historico de Commits (Recentes)
+- **2026-02-08 21:40** [`1d50746`] Fix Post button disabled: use React-compatible clear + InputEvent dispatch (src/puppeteer-post.js)
+- **2026-02-08 19:15** [`a277284`] Fix analytics scraper: replace DOM scraping with Gemini Vision API (.claude/CLAUDE.md,data/GOALS.md,data/analytics-history.json,src/analytics-monitor.js)
 - **2026-02-08 16:32** [`6622841`] Fix hashtag concatenation: robust textbox clear between insertion methods (src/puppeteer-post.js)
 - **2026-02-08 12:30** [`2bab48e`] Fix learning engine, schedule, and analytics: prevent noise-based adjustments (data/GOALS.md,data/learnings.json,scripts/cron-daemon-v2.js,scripts/daily-learning.js,src/analytics-monitor.js)
 - **2026-02-07 20:36** [`cc0ffff`] Update learning engine fallback + goals tracking (.claude/CLAUDE.md,data/GOALS.md,src/learning-engine.js)

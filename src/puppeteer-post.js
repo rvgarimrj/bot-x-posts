@@ -157,26 +157,53 @@ async function connectToChrome() {
 }
 
 /**
- * Fecha abas em excesso para liberar memoria
+ * Fecha abas problematicas e em excesso para evitar acumulo.
+ * Fecha: compose/post, blob:, sw.js, abas não-x.com em excesso.
+ * Mantém: a aba /home mais recente.
  */
-async function closeExcessTabs(browser) {
+async function cleanupTabs(browser) {
   try {
     const pages = await Promise.race([
       browser.pages(),
       new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
     ])
 
-    if (pages.length > MAX_TABS) {
-      console.log(`   🧹 Fechando ${pages.length - MAX_TABS} abas em excesso...`)
-      // Fecha as mais antigas, mantendo as ultimas MAX_TABS
-      const toClose = pages.slice(0, pages.length - MAX_TABS)
-      for (const p of toClose) {
-        const url = p.url()
-        // Nao fecha a aba do X
-        if (!url.includes('x.com') && !url.includes('twitter.com')) {
+    let closed = 0
+    let homeTab = null
+
+    for (const p of pages) {
+      const url = p.url()
+
+      // Sempre close stale tabs: compose/post, blob:, sw.js
+      if (url.includes('compose/post') || url.startsWith('blob:') || url.includes('sw.js')) {
+        await p.close().catch(() => {})
+        closed++
+        continue
+      }
+
+      // Track best /home tab
+      if (url.includes('x.com/home') || url === 'https://x.com/') {
+        if (homeTab) {
+          // Already have a /home tab, close this duplicate
           await p.close().catch(() => {})
+          closed++
+        } else {
+          homeTab = p
+        }
+        continue
+      }
+
+      // Close non-x.com tabs if too many
+      if (!url.includes('x.com') && !url.includes('twitter.com')) {
+        if (pages.length - closed > MAX_TABS) {
+          await p.close().catch(() => {})
+          closed++
         }
       }
+    }
+
+    if (closed > 0) {
+      console.log(`   🧹 Fechou ${closed} aba(s) stale/excess`)
     }
   } catch (e) {
     // Ignora erros - limpeza nao e critica
@@ -261,28 +288,24 @@ async function findOrCreateXTab(browser, forceNew = false) {
 }
 
 /**
- * Limpa o textbox do composer de forma robusta.
- * Cmd+A → Backspace falha no contentEditable do X porque React reconciliation
- * pode restaurar o conteúdo parcial. Essa função usa múltiplas abordagens.
+ * Limpa o textbox do composer usando Cmd+A + Backspace (DraftJS-compatible).
+ * NÃO usar execCommand('selectAll'/'delete') - corrompe estado interno do DraftJS,
+ * fazendo o botão Postar ficar desabilitado mesmo com texto visível.
  */
 async function clearTextbox(page) {
-  // Abordagem 1: execCommand selectAll + delete (funciona em contentEditable)
+  // Focus textbox first
   await page.evaluate(() => {
     const el = document.querySelector('[data-testid="tweetTextarea_0"]')
-    if (el) {
-      el.focus()
-      document.execCommand('selectAll')
-      document.execCommand('delete')
-    }
+    if (el) el.focus()
   })
-  await new Promise(r => setTimeout(r, 300))
+  await new Promise(r => setTimeout(r, 200))
 
-  // Abordagem 2: Cmd+A → Backspace como fallback
+  // Cmd+A → Backspace (dispatches proper keyboard events that DraftJS handles)
   await page.keyboard.down('Meta')
   await page.keyboard.press('a')
   await page.keyboard.up('Meta')
   await page.keyboard.press('Backspace')
-  await new Promise(r => setTimeout(r, 300))
+  await new Promise(r => setTimeout(r, 500))
 
   // Verifica se limpou
   const remaining = await page.evaluate(() => {
@@ -291,11 +314,10 @@ async function clearTextbox(page) {
   })
 
   if (remaining > 0) {
-    // Abordagem 3: força via selectAll + delete novamente
-    await page.evaluate(() => {
-      document.execCommand('selectAll')
-      document.execCommand('delete')
-    })
+    // Retry: Triple-click (select all in block) + Backspace
+    await page.click('[data-testid="tweetTextarea_0"]', { clickCount: 3 })
+    await new Promise(r => setTimeout(r, 200))
+    await page.keyboard.press('Backspace')
     await new Promise(r => setTimeout(r, 300))
   }
 }
@@ -333,7 +355,7 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
     browser = await connectToChrome()
 
     // Limpa abas em excesso
-    await closeExcessTabs(browser)
+    await cleanupTabs(browser)
 
     // Encontra ou cria aba do X
     const tabResult = await findOrCreateXTab(browser, forceNewTab)
@@ -833,6 +855,16 @@ export async function postMultipleTweets(posts, onProgress = null) {
         console.log('   🔄 Erro de contexto detectado, próxima tentativa usará nova aba')
         forceNewTab = true
       }
+
+      // Se sessão expirou, para imediatamente (sem retry inútil)
+      if (!result.success && result.error && result.error.includes('Nao esta logado')) {
+        console.log('   🔒 Sessão expirada - abortando todos os posts restantes')
+        // Mark remaining posts as failed
+        for (let j = i; j < posts.length; j++) {
+          results.push({ success: false, error: 'Sessão expirada', index: j, topic: posts[j].topic, sessionExpired: true })
+        }
+        return { results, total: posts.length, published: results.filter(r => r.success).length, sessionExpired: true }
+      }
     }
 
     // Atualiza estado
@@ -843,6 +875,15 @@ export async function postMultipleTweets(posts, onProgress = null) {
     } else {
       console.log(`   ❌ Erro: Falhou após todas tentativas`)
       consecutiveFailures++
+
+      // Se 2+ falhas consecutivas com "Nao esta logado", sessão expirou
+      if (consecutiveFailures >= 2 && result.error && result.error.includes('Nao esta logado')) {
+        console.log('   🔒 Sessão expirada confirmada - abortando posts restantes')
+        for (let j = i + 1; j < posts.length; j++) {
+          results.push({ success: false, error: 'Sessão expirada', index: j, topic: posts[j].topic, sessionExpired: true })
+        }
+        return { results, total: posts.length, published: results.filter(r => r.success).length, sessionExpired: true }
+      }
 
       // Se 3 falhas consecutivas, força nova aba para próximos
       if (consecutiveFailures >= 3) {
@@ -915,7 +956,7 @@ export async function postThread(tweets, onProgress = null, firstTweetImage = nu
     browser = await connectToChrome()
 
     // Limpa abas em excesso
-    await closeExcessTabs(browser)
+    await cleanupTabs(browser)
 
     // Encontra ou cria aba do X
     const tabResult = await findOrCreateXTab(browser, false)
@@ -1480,7 +1521,7 @@ export async function postTweetWithImage(text, imagePath, keepBrowserOpen = true
     console.log('🔌 Conectando ao Chrome...')
     browser = await connectToChrome()
 
-    await closeExcessTabs(browser)
+    await cleanupTabs(browser)
 
     const tabResult = await findOrCreateXTab(browser, false)
     page = tabResult.page
@@ -1575,7 +1616,7 @@ export async function postTweetWithVideo(text, videoPath, keepBrowserOpen = true
     console.log('🔌 Conectando ao Chrome...')
     browser = await connectToChrome()
 
-    await closeExcessTabs(browser)
+    await cleanupTabs(browser)
 
     const tabResult = await findOrCreateXTab(browser, false)
     page = tabResult.page
@@ -1735,7 +1776,7 @@ export async function postQuoteTweet(commentary, tweetUrl, keepBrowserOpen = tru
     console.log('🔌 Conectando ao Chrome...')
     browser = await connectToChrome()
 
-    await closeExcessTabs(browser)
+    await cleanupTabs(browser)
 
     const tabResult = await findOrCreateXTab(browser, false)
     page = tabResult.page

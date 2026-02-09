@@ -150,6 +150,12 @@ async function postWithRetry(post, maxRetries = MAX_RETRIES) {
       return { success: true, warning: 'possibly_posted' }
     }
 
+    // Don't retry if session expired (login required)
+    if (result.error && result.error.includes('Nao esta logado')) {
+      console.log('   🔒 Sessão expirada - sem retry (precisa login manual)')
+      return { success: false, error: result.error, sessionExpired: true }
+    }
+
     if (attempt <= maxRetries) {
       console.log(`   ⚠️ Tentativa ${attempt} falhou, aguardando 10s para retry...`)
       await new Promise(r => setTimeout(r, 10000))
@@ -709,6 +715,16 @@ async function main() {
     } else {
       console.log(`   ❌ Erro: ${result.error}`)
       errors.push(`${emoji}${flag} ${topic.toUpperCase()}: ${result.error}`)
+
+      // Session expired - abort remaining posts immediately
+      if (result.sessionExpired) {
+        console.log('   🔒 Sessão expirada - abortando posts restantes')
+        for (let j = i + 1; j < posts.length; j++) {
+          errors.push(`⏭️ ${posts[j].topic.toUpperCase()}: Pulado (sessão expirada)`)
+        }
+        await notify('🔒 <b>SESSÃO EXPIRADA</b>\n\nO login no X expirou. Faça login manualmente no Chrome e recarregue x.com/home.\n\nPosts restantes foram cancelados.')
+        break
+      }
     }
 
     // Delay between posts
