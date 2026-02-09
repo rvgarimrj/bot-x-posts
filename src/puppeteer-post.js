@@ -289,37 +289,68 @@ async function findOrCreateXTab(browser, forceNew = false) {
 
 /**
  * Limpa o textbox do composer usando Cmd+A + Backspace (DraftJS-compatible).
- * NÃO usar execCommand('selectAll'/'delete') - corrompe estado interno do DraftJS,
- * fazendo o botão Postar ficar desabilitado mesmo com texto visível.
+ * NÃO usar execCommand('selectAll'/'delete') - corrompe estado interno do DraftJS.
  */
 async function clearTextbox(page) {
-  // Focus textbox first
-  await page.evaluate(() => {
-    const el = document.querySelector('[data-testid="tweetTextarea_0"]')
-    if (el) el.focus()
-  })
-  await new Promise(r => setTimeout(r, 200))
+  // Focus textbox, then Cmd+A → Backspace
+  const textbox = await page.$('[data-testid="tweetTextarea_0"]')
+  if (textbox) {
+    await textbox.click()
+    await new Promise(r => setTimeout(r, 200))
+  }
 
-  // Cmd+A → Backspace (dispatches proper keyboard events that DraftJS handles)
   await page.keyboard.down('Meta')
   await page.keyboard.press('a')
   await page.keyboard.up('Meta')
+  await new Promise(r => setTimeout(r, 100))
   await page.keyboard.press('Backspace')
   await new Promise(r => setTimeout(r, 500))
+}
 
-  // Verifica se limpou
-  const remaining = await page.evaluate(() => {
-    const el = document.querySelector('[data-testid="tweetTextarea_0"]')
-    return el ? (el.innerText || '').trim().length : 0
+/**
+ * Fecha o compose modal e reabre limpo.
+ * Mais confiável que clearTextbox porque DraftJS inicializa estado novo.
+ */
+async function resetComposer(page) {
+  console.log('   🔄 Resetando composer (fechar + reabrir)...')
+
+  // Fecha modal com Escape
+  await page.keyboard.press('Escape')
+  await new Promise(r => setTimeout(r, 1000))
+
+  // Trata dialog "Descartar/Discard" se aparecer
+  const discarded = await page.evaluate(() => {
+    const buttons = document.querySelectorAll('[role="button"]')
+    for (const btn of buttons) {
+      const text = (btn.textContent || '').toLowerCase()
+      if (text.includes('discard') || text.includes('descartar')) {
+        btn.click()
+        return true
+      }
+    }
+    return false
   })
-
-  if (remaining > 0) {
-    // Retry: Triple-click (select all in block) + Backspace
-    await page.click('[data-testid="tweetTextarea_0"]', { clickCount: 3 })
-    await new Promise(r => setTimeout(r, 200))
-    await page.keyboard.press('Backspace')
-    await new Promise(r => setTimeout(r, 300))
+  if (discarded) {
+    await new Promise(r => setTimeout(r, 1000))
   }
+
+  // Segundo Escape se modal ainda aberta
+  const stillOpen = await isComposeModalOpen(page)
+  if (stillOpen) {
+    await page.keyboard.press('Escape')
+    await new Promise(r => setTimeout(r, 1000))
+  }
+
+  // Reabre composer
+  const btn = await page.$('[data-testid="SideNav_NewTweet_Button"]')
+  if (btn) {
+    await btn.click()
+    await new Promise(r => setTimeout(r, 2000))
+  }
+
+  // Encontra textbox limpo
+  const newTextbox = await page.$('[data-testid="tweetTextarea_0"]')
+  return newTextbox
 }
 
 /**
@@ -514,46 +545,44 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
     })
 
     if (insertedText.length < text.length * 0.8) {
-      // MÉTODO 2: Clipboard via textarea oculto (não requer user gesture)
+      // MÉTODO 2: Reset composer + Clipboard
       console.log(`   Texto inserido: ${insertedText.length}/${text.length} chars`)
-      console.log('   ⚠️ execCommand incompleto, tentando clipboard via textarea...')
+      console.log('   ⚠️ execCommand incompleto, resetando composer + clipboard...')
 
-      // Limpa o que foi inserido (robust clear)
-      await clearTextbox(page)
+      // Reset composer (fecha e reabre - garante estado limpo)
+      textbox = await resetComposer(page)
 
-      // Usa textarea oculto para copiar (funciona sem user gesture)
-      const clipboardWorked = await page.evaluate((textToInsert) => {
-        try {
-          const temp = document.createElement('textarea')
-          temp.value = textToInsert
-          temp.style.position = 'fixed'
-          temp.style.left = '-9999px'
-          temp.style.top = '-9999px'
-          temp.style.opacity = '0'
-          document.body.appendChild(temp)
-          temp.select()
-          temp.setSelectionRange(0, textToInsert.length)
-          const success = document.execCommand('copy')
-          document.body.removeChild(temp)
-          return success
-        } catch {
-          return false
-        }
-      }, text)
+      if (textbox) {
+        // Copia texto para clipboard via textarea oculto
+        const clipboardWorked = await page.evaluate((textToInsert) => {
+          try {
+            const temp = document.createElement('textarea')
+            temp.value = textToInsert
+            temp.style.position = 'fixed'
+            temp.style.left = '-9999px'
+            temp.style.opacity = '0'
+            document.body.appendChild(temp)
+            temp.select()
+            temp.setSelectionRange(0, textToInsert.length)
+            const success = document.execCommand('copy')
+            document.body.removeChild(temp)
+            return success
+          } catch {
+            return false
+          }
+        }, text)
 
-      if (clipboardWorked) {
-        try {
-          // Re-find textbox (DOM may have changed, stale reference causes "Node is detached")
-          textbox = await page.$('[data-testid="tweetTextarea_0"]') || textbox
-          await textbox.click()
-          await new Promise(r => setTimeout(r, 200))
-          // Cola (Cmd+V no Mac)
-          await page.keyboard.down('Meta')
-          await page.keyboard.press('v')
-          await page.keyboard.up('Meta')
-          await new Promise(r => setTimeout(r, 1000))
-        } catch (pasteErr) {
-          console.log(`   ⚠️ Erro ao colar: ${pasteErr.message}`)
+        if (clipboardWorked) {
+          try {
+            await textbox.click()
+            await new Promise(r => setTimeout(r, 200))
+            await page.keyboard.down('Meta')
+            await page.keyboard.press('v')
+            await page.keyboard.up('Meta')
+            await new Promise(r => setTimeout(r, 1000))
+          } catch (pasteErr) {
+            console.log(`   ⚠️ Erro ao colar: ${pasteErr.message}`)
+          }
         }
       }
 
@@ -571,20 +600,16 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
     }
 
     if (insertedText.length < text.length * 0.8) {
-      // MÉTODO 3: keyboard.type (lento mas sempre funciona)
-      console.log('   ⚠️ Clipboard também falhou, usando digitação manual...')
+      // MÉTODO 3: Reset composer + keyboard.type (lento mas sempre funciona)
+      console.log('   ⚠️ Clipboard também falhou, resetando + digitação manual...')
 
       try {
-        // Re-find textbox (DOM may have changed during Method 2)
-        textbox = await page.$('[data-testid="tweetTextarea_0"]') || textbox
-        await textbox.click()
-        await new Promise(r => setTimeout(r, 300))
-
-        // Limpa (robust clear)
-        await clearTextbox(page)
-
-        // Digita caractere por caractere
-        await typeHuman(page, text)
+        textbox = await resetComposer(page)
+        if (textbox) {
+          await textbox.click()
+          await new Promise(r => setTimeout(r, 300))
+          await typeHuman(page, text)
+        }
       } catch (typeErr) {
         console.log(`   ⚠️ Digitação manual falhou: ${typeErr.message}`)
       }
@@ -594,62 +619,60 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
     console.log('   Relendo antes de postar...')
     await new Promise(r => setTimeout(r, Math.random() * 2000 + 2000))
 
-    // Verificação final do texto - rejeita se < 90%
-    const finalText = await page.evaluate(() => {
+    // Verificação final do texto - rejeita se < 90% ou > 115% (duplicado) ou conteúdo errado
+    let finalText = await page.evaluate(() => {
       const el = document.querySelector('[data-testid="tweetTextarea_0"]')
       return el ? (el.innerText || el.textContent || '') : ''
     })
 
-    const insertRatio = finalText.length / text.length
+    let insertRatio = finalText.length / text.length
+    // Normaliza texto para comparação (remove \n extras do contentEditable)
+    const normalizeForCompare = (t) => t.replace(/\s+/g, ' ').trim().substring(0, 40)
+    const expectedStart = normalizeForCompare(text)
+    const actualStart = normalizeForCompare(finalText)
+    const contentMatch = actualStart.startsWith(expectedStart.substring(0, 20))
 
-    if (insertRatio < 0.9) {
-      console.log(`   ⚠️ Texto incompleto (${finalText.length}/${text.length} chars = ${Math.round(insertRatio * 100)}%)`)
+    // Detecta texto duplicado (clearTextbox falhou, novo texto inserido sobre o parcial)
+    const isDuplicate = insertRatio > 1.15
+    const isTruncated = insertRatio < 0.9
+    const isCorrupted = !contentMatch && finalText.length > 20
 
-      // Tenta uma última vez: limpa tudo e usa clipboard
-      console.log('   🔄 Última tentativa: limpando e colando via clipboard...')
-      await page.keyboard.down('Meta')
-      await page.keyboard.press('a')
-      await page.keyboard.up('Meta')
-      await page.keyboard.press('Backspace')
-      await new Promise(r => setTimeout(r, 500))
+    if (isDuplicate || isTruncated || isCorrupted) {
+      const reason = isDuplicate ? 'duplicado' : isCorrupted ? 'corrompido' : 'incompleto'
+      console.log(`   ⚠️ Texto ${reason} (${finalText.length}/${text.length} chars = ${Math.round(insertRatio * 100)}%)`)
+      if (isCorrupted) {
+        console.log(`   ⚠️ Esperado: "${expectedStart.substring(0, 30)}..."`)
+        console.log(`   ⚠️ Obtido:   "${actualStart.substring(0, 30)}..."`)
+      }
 
-      // Clipboard via textarea oculto
-      await page.evaluate((textToInsert) => {
-        const temp = document.createElement('textarea')
-        temp.value = textToInsert
-        temp.style.position = 'fixed'
-        temp.style.left = '-9999px'
-        temp.style.opacity = '0'
-        document.body.appendChild(temp)
-        temp.select()
-        temp.setSelectionRange(0, textToInsert.length)
-        document.execCommand('copy')
-        document.body.removeChild(temp)
-      }, text)
-
-      // Re-find textbox (DOM may have changed)
-      try { textbox = await page.$('[data-testid="tweetTextarea_0"]') || textbox } catch {}
-      await textbox.click()
-      await new Promise(r => setTimeout(r, 300))
-      await page.keyboard.down('Meta')
-      await page.keyboard.press('v')
-      await page.keyboard.up('Meta')
-      await new Promise(r => setTimeout(r, 1500))
+      // Última tentativa: resetar composer + typeHuman (mais confiável)
+      console.log('   🔄 Última tentativa: reset composer + digitação manual...')
+      try {
+        textbox = await resetComposer(page)
+        if (textbox) {
+          await textbox.click()
+          await new Promise(r => setTimeout(r, 300))
+          await typeHuman(page, text)
+          await new Promise(r => setTimeout(r, 500))
+        }
+      } catch (lastErr) {
+        console.log(`   ⚠️ Última tentativa falhou: ${lastErr.message}`)
+      }
 
       // Verifica de novo
-      const retryText = await page.evaluate(() => {
+      finalText = await page.evaluate(() => {
         const el = document.querySelector('[data-testid="tweetTextarea_0"]')
         return el ? (el.innerText || el.textContent || '') : ''
       })
 
-      const retryRatio = retryText.length / text.length
-      if (retryRatio < 0.9) {
-        console.log(`   ❌ Texto ainda incompleto após retry (${retryText.length}/${text.length} chars = ${Math.round(retryRatio * 100)}%)`)
-        console.log(`   Conteúdo: "${retryText.slice(0, 100)}..."`)
-        throw new Error(`Texto truncado: ${retryText.length}/${text.length} chars inseridos (${Math.round(retryRatio * 100)}%)`)
+      insertRatio = finalText.length / text.length
+      if (insertRatio < 0.9 || insertRatio > 1.15) {
+        console.log(`   ❌ Texto ainda ruim após retry (${finalText.length}/${text.length} chars = ${Math.round(insertRatio * 100)}%)`)
+        console.log(`   Conteúdo: "${finalText.slice(0, 100)}..."`)
+        throw new Error(`Texto ${insertRatio > 1.15 ? 'duplicado' : 'truncado'}: ${finalText.length}/${text.length} chars (${Math.round(insertRatio * 100)}%)`)
       }
 
-      console.log(`   ✅ Retry funcionou! (${retryText.length}/${text.length} chars)`)
+      console.log(`   ✅ Retry funcionou! (${finalText.length}/${text.length} chars)`)
     }
 
     console.log('   ✅ Texto inserido')
