@@ -456,8 +456,12 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
     await textbox.click()
     await new Promise(r => setTimeout(r, 500))
 
-    // Limpa qualquer texto existente
-    await clearTextbox(page)
+    // Limpa qualquer texto existente (Cmd+A + Backspace = React/DraftJS-compatible)
+    await page.keyboard.down('Meta')
+    await page.keyboard.press('a')
+    await page.keyboard.up('Meta')
+    await page.keyboard.press('Backspace')
+    await new Promise(r => setTimeout(r, 500))
 
     // ========== INSERÇÃO VIA execCommand (mais confiável) ==========
     // execCommand('insertText') funciona sem user gesture, ao contrário de navigator.clipboard
@@ -473,6 +477,8 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
       const activeEl = document.activeElement
       if (activeEl && activeEl.isContentEditable) {
         document.execCommand('insertText', false, textToInsert)
+        // Dispatch input event para React/DraftJS registrar a mudança
+        activeEl.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }))
       }
     }, text)
 
@@ -628,7 +634,6 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
 
     // Procura botao Postar
     console.log('🔍 Procurando botao Postar...')
-    let postBtn = null
     const btnSelectors = [
       '[data-testid="tweetButton"]',
       '[data-testid="tweetButtonInline"]',
@@ -636,33 +641,62 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
       '[role="button"][data-testid="tweetButton"]'
     ]
 
+    let foundBtnSelector = null
     for (const selector of btnSelectors) {
-      postBtn = await page.$(selector)
-      if (postBtn) {
+      const btn = await page.$(selector)
+      if (btn) {
+        foundBtnSelector = selector
         console.log(`   ✅ Encontrou: ${selector}`)
         break
       }
     }
 
-    if (!postBtn) {
+    if (!foundBtnSelector) {
       throw new Error('Nao encontrou botao de postar')
     }
 
-    // Espera botao estar habilitado
-    await new Promise(r => setTimeout(r, 1000))
+    // Espera botao estar habilitado (React precisa processar o texto digitado)
+    await new Promise(r => setTimeout(r, 2000))
 
-    // Verifica se botao está desabilitado
-    const isDisabled = await page.evaluate((el) => {
-      return el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true'
-    }, postBtn)
+    // Verifica se botao está desabilitado usando querySelector (evita stale handle)
+    const btnState = await page.evaluate((sel) => {
+      const btn = document.querySelector(sel)
+      if (!btn) return { found: false }
+      return {
+        found: true,
+        disabled: btn.hasAttribute('disabled') || btn.getAttribute('aria-disabled') === 'true',
+        text: (btn.innerText || '').trim()
+      }
+    }, foundBtnSelector)
 
-    if (isDisabled) {
-      throw new Error('Botao Postar está desabilitado')
+    console.log(`   Botao: found=${btnState.found}, disabled=${btnState.disabled}, text="${btnState.text}"`)
+
+    if (!btnState.found) {
+      throw new Error('Botao desapareceu antes de clicar (React re-render)')
     }
 
-    // Clica no botao Postar usando Puppeteer click (mais confiavel que evaluate)
+    if (btnState.disabled) {
+      // Tenta esperar mais 3s (React pode estar processando)
+      console.log('   Botao desabilitado, aguardando 3s...')
+      await new Promise(r => setTimeout(r, 3000))
+
+      const retryState = await page.evaluate((sel) => {
+        const btn = document.querySelector(sel)
+        return btn ? !btn.hasAttribute('disabled') && btn.getAttribute('aria-disabled') !== 'true' : false
+      }, foundBtnSelector)
+
+      if (!retryState) {
+        throw new Error('Botao Postar está desabilitado (texto pode nao ter sido registrado pelo React)')
+      }
+      console.log('   Botao habilitado apos espera')
+    }
+
+    // Clica no botao Postar via evaluate (evita stale ElementHandle)
     console.log('🚀 Clicando em Postar...')
-    await postBtn.click()
+    await page.evaluate((sel) => {
+      const btn = document.querySelector(sel)
+      if (btn) btn.click()
+    }, foundBtnSelector)
     await new Promise(r => setTimeout(r, 5000))
 
     // Verifica se há aviso de duplicado ("Opa! Você já disse isso")
@@ -692,16 +726,17 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
         '[data-testid="tweetButtonInline"]'
       ]
       for (const sel of altSelectors) {
-        const altBtn = await page.$(sel)
-        if (altBtn) {
-          const altDisabled = await page.evaluate((el) => {
-            return el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true'
-          }, altBtn)
-          if (!altDisabled) {
-            await altBtn.click()
-            await new Promise(r => setTimeout(r, 5000))
-            break
+        const clicked = await page.evaluate((s) => {
+          const btn = document.querySelector(s)
+          if (btn && !btn.hasAttribute('disabled') && btn.getAttribute('aria-disabled') !== 'true') {
+            btn.click()
+            return true
           }
+          return false
+        }, sel)
+        if (clicked) {
+          await new Promise(r => setTimeout(r, 5000))
+          break
         }
       }
 
@@ -743,7 +778,7 @@ export async function postTweet(text, keepBrowserOpen = true, forceNewTab = fals
     return { success: true }
 
   } catch (err) {
-    console.error('❌ Erro ao postar:', err.message)
+    console.log('❌ Erro ao postar:', err.message)
 
     // Fecha aba nova em caso de erro (evita acumular abas)
     if (isNewTab && page) {
