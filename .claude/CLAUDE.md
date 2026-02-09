@@ -181,7 +181,11 @@ npm run learn|collect|health|restart|report|goals|learn:dry
 | Post duplicado no X | Detecta "Voce ja disse isso" + flag `possiblyPosted` pula retry |
 | Cron perdido (watchdog lento) | Same-hour detection (10min) + grace window 60min |
 | Analytics lendo eixo do grafico | Screenshot + Gemini Vision API (substituiu DOM scraping) |
-| Hashtag colada (#Tag1#Tag2) | `clearTextbox()` com `execCommand('selectAll'+'delete')` |
+| Hashtag colada (#Tag1#Tag2) | `clearTextbox()` com Cmd+A+Backspace (DraftJS-safe) |
+| Botao Postar desabilitado | `clearTextbox` usava execCommand que corrompía DraftJS. Fix: so Cmd+A+Backspace |
+| Tabs stale acumulando | `cleanupTabs()` fecha compose/post, blob:, sw.js antes de cada post |
+| Sessao expirada sem aviso | Detecta "Nao esta logado" → aborta posts + alerta Telegram |
+| Cron 00:05 nao dispara | Timer drift node-cron apos 19h+ uptime. Failsafe: restart se uptime>25h |
 
 ## Fluxo de Postagem (V2)
 
@@ -322,6 +326,7 @@ node scripts/test-video-meme.js [topic]      # Specify topic
 Verificacao final exige 90% do texto. Se < 90%, retry via clipboard. Se ainda falha, erro (trigger retry do post inteiro).
 
 ## Historico de Commits (Recentes)
+- **2026-02-09 07:50** [`c734165`] Fix tab accumulation, session detection, and DraftJS text clearing (.claude/CLAUDE.md,scripts/auto-post-v2.js,src/puppeteer-post.js)
 - **2026-02-08 21:40** [`1d50746`] Fix Post button disabled: use React-compatible clear + InputEvent dispatch (src/puppeteer-post.js)
 - **2026-02-08 19:15** [`a277284`] Fix analytics scraper: replace DOM scraping with Gemini Vision API (.claude/CLAUDE.md,data/GOALS.md,data/analytics-history.json,src/analytics-monitor.js)
 - **2026-02-08 16:32** [`6622841`] Fix hashtag concatenation: robust textbox clear between insertion methods (src/puppeteer-post.js)
